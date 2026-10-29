@@ -26,6 +26,7 @@ function acciones_() {
         usuarios: usuariosActivos_()
       };
     },
+    sugerir: sugerir_,
     listarMovimientos: listarMovimientos_,
     revisarDuplicados: revisarDuplicados_,
     guardarMovimiento: guardarMovimiento_,

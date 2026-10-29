@@ -97,6 +97,14 @@ function normalizar_(texto) {
     .trim();
 }
 
+/**
+ * Para el diccionario además se quitan los números (sucursales, folios).
+ * Misma regla que normalizarGlosa_ en herramientas/convertir-historial.js.
+ */
+function normalizarGlosa_(texto) {
+  return normalizar_(texto).replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 /** Huella para detectar duplicados: fecha|monto|glosa normalizada. */
 function huella_(fecha, monto, glosa) {
   return fechaIso_(fecha) + '|' + monto + '|' + normalizar_(glosa);

@@ -119,6 +119,7 @@ function guardarMovimiento_(usuario, datos) {
     if (v.tipo === 'Familiar') {
       agregarFilas_('Repartos', calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto));
     }
+    aprenderGlosa_(v.descripcion, v.tipo, v.categoria.id);
     return { guardado: true, id: movimiento.id };
   });
 }
@@ -162,8 +163,9 @@ function actualizarMovimiento_(usuario, datos) {
     const fechaAnterior = leerFecha_(movimiento.fecha);
     const cambioHuella = !fechaAnterior || fechaIso_(fechaAnterior) !== fechaIso_(v.fecha) ||
       Number(movimiento.monto) !== v.monto || String(movimiento.descripcion) !== v.descripcion;
-    const cambioReparto = cambioHuella || movimiento.tipo !== v.tipo ||
+    const cambioClasificacion = movimiento.tipo !== v.tipo ||
       movimiento.categoria_id !== v.categoria.id || movimiento.estado !== 'Confirmado';
+    const cambioReparto = cambioHuella || cambioClasificacion;
 
     movimiento.fecha = v.fecha;
     movimiento.monto = v.monto;
@@ -183,6 +185,9 @@ function actualizarMovimiento_(usuario, datos) {
       if (v.tipo === 'Familiar') {
         agregarFilas_('Repartos', calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto));
       }
+    }
+    if (cambioClasificacion) {
+      aprenderGlosa_(glosaDe_(movimiento), v.tipo, v.categoria.id);
     }
     return { actualizado: true };
   });

@@ -1,0 +1,113 @@
+/**
+ * Estructura de la planilla: nombre de cada pestaña y sus columnas, en orden.
+ * Aquí solo se define la FORMA de los datos. Los datos en sí (categorías,
+ * usuarios, correos) nunca se escriben en el código.
+ */
+const ESTRUCTURA = {
+  Movimientos: [
+    'id', 'fecha', 'monto', 'descripcion', 'usuario_id', 'tipo', 'categoria_id',
+    'rendir_trabajo', 'estado', 'origen', 'huella', 'duplicado_revisado',
+    'creado_en', 'modificado_en'
+  ],
+  Repartos: ['movimiento_id', 'usuario_id', 'porcentaje', 'monto'],
+  Ingresos: ['id', 'usuario_id', 'anio', 'mes', 'monto', 'creado_en'],
+  Categorias: [
+    'id', 'tipo', 'categoria', 'subcategoria', 'criterio', 'usuario_100',
+    'activa', 'orden'
+  ],
+  Usuarios: ['id', 'nombre_visible', 'rol', 'activo'],
+  Diccionario: [
+    'glosa_normalizada', 'tipo', 'categoria_id', 'veces', 'porcentaje',
+    'total_registros', 'actualizado_en'
+  ],
+  UsoIA: [
+    'fecha_hora', 'usuario_id', 'tipo_entrada', 'tokens_entrada',
+    'tokens_salida', 'costo_usd'
+  ]
+};
+
+/**
+ * Formato de cada columna según su nombre. Con la configuración regional de
+ * Chile, '#,##0' muestra los miles con punto (1.044.789).
+ * '@' significa "texto": evita que Sheets convierta los códigos en números.
+ */
+const FORMATOS = {
+  id: '@',
+  movimiento_id: '@',
+  usuario_id: '@',
+  categoria_id: '@',
+  usuario_100: '@',
+  huella: '@',
+  glosa_normalizada: '@',
+  fecha: 'dd/mm/yyyy',
+  fecha_hora: 'dd/mm/yyyy hh:mm',
+  creado_en: 'dd/mm/yyyy hh:mm',
+  modificado_en: 'dd/mm/yyyy hh:mm',
+  actualizado_en: 'dd/mm/yyyy hh:mm',
+  monto: '#,##0',
+  porcentaje: '0.0%',
+  costo_usd: '0.0000'
+};
+
+/**
+ * Prepara la planilla: crea las pestañas que falten con sus encabezados y
+ * formatos. Se ejecuta a mano una vez desde el editor de Apps Script.
+ * Es seguro ejecutarla de nuevo: no toca las pestañas que ya existen.
+ */
+function configurarPlanilla() {
+  const planilla = SpreadsheetApp.getActiveSpreadsheet();
+  planilla.setSpreadsheetTimeZone('America/Santiago');
+  planilla.setSpreadsheetLocale('es_CL');
+
+  const creadas = [];
+  Object.keys(ESTRUCTURA).forEach(function (nombre) {
+    if (crearPestanaSiNoExiste_(planilla, nombre, ESTRUCTURA[nombre])) {
+      creadas.push(nombre);
+    }
+  });
+  eliminarHojasInicialesVacias_(planilla);
+
+  Logger.log(creadas.length
+    ? 'Pestañas creadas: ' + creadas.join(', ')
+    : 'No se creó nada: todas las pestañas ya existían.');
+}
+
+/**
+ * Crea una pestaña con su fila de encabezados. Devuelve true si la creó y
+ * false si ya existía (en ese caso no la modifica).
+ * El "_" al final del nombre hace que la función sea privada: no aparece en
+ * el menú de ejecución ni se puede llamar desde afuera del script.
+ */
+function crearPestanaSiNoExiste_(planilla, nombre, columnas) {
+  if (planilla.getSheetByName(nombre)) {
+    return false;
+  }
+  const hoja = planilla.insertSheet(nombre);
+  hoja.getRange(1, 1, 1, columnas.length)
+    .setValues([columnas])
+    .setFontWeight('bold')
+    .setBackground('#e8eef7');
+  hoja.setFrozenRows(1);
+
+  const filasDeDatos = hoja.getMaxRows() - 1;
+  columnas.forEach(function (columna, i) {
+    if (FORMATOS[columna]) {
+      hoja.getRange(2, i + 1, filasDeDatos, 1).setNumberFormat(FORMATOS[columna]);
+    }
+  });
+  hoja.autoResizeColumns(1, columnas.length);
+  return true;
+}
+
+/**
+ * Borra las hojas vacías que Google crea por defecto ("Hoja 1" o "Sheet1"),
+ * pero solo si no son parte de la estructura y no tienen ningún dato.
+ */
+function eliminarHojasInicialesVacias_(planilla) {
+  planilla.getSheets().forEach(function (hoja) {
+    const esNuestra = Object.prototype.hasOwnProperty.call(ESTRUCTURA, hoja.getName());
+    if (!esNuestra && hoja.getLastRow() === 0 && planilla.getSheets().length > 1) {
+      planilla.deleteSheet(hoja);
+    }
+  });
+}

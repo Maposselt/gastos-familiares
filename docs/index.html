@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Lista de sitios permitidos: solo esta página, Google (inicio de sesión) y el backend. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src https://script.google.com https://script.googleusercontent.com https://accounts.google.com/gsi/; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="light dark">
+  <title>Gastos Familiares</title>
+  <link rel="stylesheet" href="estilos.css">
+  <script src="app.js" defer></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+  <header class="barra">
+    <h1>Gastos Familiares</h1>
+    <div id="sesion" class="sesion" hidden>
+      <span id="nombre-usuario"></span>
+      <button type="button" id="boton-salir" class="enlace">Salir</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="pantalla-entrar" class="pantalla">
+      <h2>Entrar</h2>
+      <p>Entra con tu cuenta de Google.</p>
+      <div id="boton-google" class="boton-google"></div>
+      <p id="mensaje-entrar" class="nota"></p>
+    </section>
+
+    <section id="pantalla-nuevo" class="pantalla" hidden>
+      <h2>Nuevo gasto</h2>
+      <div id="contenedor-nuevo"></div>
+    </section>
+
+    <section id="pantalla-gastos" class="pantalla" hidden>
+      <h2>Gastos</h2>
+      <div id="por-revisar"></div>
+      <div class="filtros">
+        <label>Mes <input type="month" id="filtro-mes"></label>
+        <label>Tipo
+          <select id="filtro-tipo">
+            <option value="">Todos</option>
+            <option value="Familiar">Familiar</option>
+            <option value="Personal">Personal</option>
+          </select>
+        </label>
+        <label class="casilla"><input type="checkbox" id="filtro-anulados"> Mostrar anulados</label>
+      </div>
+      <div id="totales-mes" class="totales"></div>
+      <ul id="lista-gastos" class="lista"></ul>
+    </section>
+
+    <section id="pantalla-ingresos" class="pantalla" hidden>
+      <h2>Ingresos</h2>
+      <div class="tarjeta">
+        <h3>Registrar mi ingreso</h3>
+        <label>Mes <input type="month" id="ingreso-mes"></label>
+        <label>Monto <input type="text" id="ingreso-monto" inputmode="numeric" autocomplete="off" placeholder="0"></label>
+        <button type="button" id="boton-ingreso" class="principal">Guardar ingreso</button>
+        <p class="nota">Si ese mes ya tenía un ingreso tuyo, se reemplaza.</p>
+      </div>
+      <div class="tabla-contenedor">
+        <table id="tabla-ingresos" class="tabla"></table>
+      </div>
+    </section>
+
+    <section id="pantalla-config" class="pantalla" hidden>
+      <h2>Configuración de categorías</h2>
+      <div class="filtros">
+        <button type="button" id="boton-nueva-categoria" class="principal">Agregar categoría</button>
+        <label class="casilla"><input type="checkbox" id="filtro-desactivadas"> Mostrar desactivadas</label>
+      </div>
+      <div id="lista-categorias"></div>
+    </section>
+  </main>
+
+  <nav id="navegacion" class="navegacion" hidden>
+    <button type="button" data-pantalla="nuevo">➕<span>Nuevo</span></button>
+    <button type="button" data-pantalla="gastos">📋<span>Gastos</span></button>
+    <button type="button" data-pantalla="ingresos">💰<span>Ingresos</span></button>
+    <button type="button" data-pantalla="config" id="nav-config" hidden>⚙️<span>Config</span></button>
+  </nav>
+
+  <dialog id="dialogo" class="dialogo"></dialog>
+  <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

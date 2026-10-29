@@ -1,0 +1,26 @@
+# Planillas y datos personales: nunca se suben
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.ods
+datos/
+
+# Credenciales y claves
+.clasprc.json
+.clasp.json
+.env
+.env.*
+*.key
+*.pem
+credentials*.json
+client_secret*.json
+token*.json
+
+# Librerías descargadas (se reinstalan, no se guardan)
+node_modules/
+
+# Archivos del sistema
+Thumbs.db
+desktop.ini
+.DS_Store

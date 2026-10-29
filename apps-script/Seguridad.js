@@ -7,6 +7,7 @@
  */
 
 const PEDIDOS_POR_MINUTO = 60;
+const INTENTOS_FALLIDOS_POR_MINUTO = 30;
 
 /**
  * Verifica con Google el comprobante (ID token) que envía la app y devuelve
@@ -84,6 +85,28 @@ function revisarLimite_(usuarioId) {
   if (cantidad > PEDIDOS_POR_MINUTO) {
     throw errorPublico_('Demasiados pedidos seguidos. Espera un minuto.');
   }
+}
+
+/**
+ * Si en el último minuto llegaron demasiados pedidos con comprobante
+ * inválido, se rechaza todo sin consultar a Google. Así nadie puede agotar
+ * la cuota diaria de consultas enviando comprobantes falsos.
+ */
+function revisarIntentosFallidos_() {
+  const cantidad = Number(CacheService.getScriptCache().get(claveIntentosFallidos_()) || 0);
+  if (cantidad >= INTENTOS_FALLIDOS_POR_MINUTO) {
+    throw errorPublico_('Demasiados intentos fallidos. Espera un minuto.');
+  }
+}
+
+function registrarIntentoFallido_() {
+  const cache = CacheService.getScriptCache();
+  const clave = claveIntentosFallidos_();
+  cache.put(clave, String(Number(cache.get(clave) || 0) + 1), 120);
+}
+
+function claveIntentosFallidos_() {
+  return 'fallos_' + Math.floor(Date.now() / 60000);
 }
 
 function exigirAdmin_(usuario) {

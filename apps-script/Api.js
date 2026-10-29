@@ -49,7 +49,14 @@ function atender_(texto) {
     } catch (e) {
       throw errorPublico_('Pedido con formato inválido.');
     }
-    const usuario = autenticar_(pedido.token);
+    revisarIntentosFallidos_();
+    let usuario;
+    try {
+      usuario = autenticar_(pedido.token);
+    } catch (e) {
+      registrarIntentoFallido_();
+      throw e;
+    }
     revisarLimite_(usuario.id);
 
     const acciones = acciones_();

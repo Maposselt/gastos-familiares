@@ -1,0 +1,8 @@
+{
+  "name": "gastos-familiares",
+  "private": true,
+  "description": "App de gastos familiares",
+  "devDependencies": {
+    "@google/clasp": "^3.4.1"
+  }
+}

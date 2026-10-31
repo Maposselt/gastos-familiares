@@ -7,6 +7,7 @@ const TIPOS = ['Familiar', 'Personal'];
 const ORIGENES = ['manual', 'glosa', 'foto', 'excel'];
 const MESES_POR_DEFECTO = 12;
 const MAXIMO_REVISION = 200;
+const SEPARADOR_DETALLE = ' — ';
 
 /**
  * Devuelve los gastos que el usuario puede ver, entre las fechas pedidas
@@ -37,21 +38,42 @@ function listarMovimientos_(usuario, datos) {
     }
   });
 
-  return visibles.map(function (m) {
-    return {
-      id: String(m.id),
-      fecha: fechaIso_(leerFecha_(m.fecha)),
-      monto: Number(m.monto),
-      descripcion: String(m.descripcion),
-      usuario_id: String(m.usuario_id),
-      tipo: String(m.tipo),
-      categoria_id: String(m.categoria_id),
-      rendir_trabajo: esSi_(m.rendir_trabajo),
-      estado: String(m.estado),
-      origen: String(m.origen),
-      repartos: familiares[m.id] || []
-    };
-  });
+  return visibles.map(function (m) { return publicarMovimiento_(m, familiares[m.id]); });
+}
+
+/** Lo que la app recibe de un gasto (sin la huella interna). */
+function publicarMovimiento_(m, repartos) {
+  return {
+    id: String(m.id),
+    fecha: fechaIso_(leerFecha_(m.fecha)),
+    monto: Number(m.monto),
+    descripcion: String(m.descripcion),
+    usuario_id: String(m.usuario_id),
+    tipo: String(m.tipo),
+    categoria_id: String(m.categoria_id),
+    rendir_trabajo: esSi_(m.rendir_trabajo),
+    estado: String(m.estado),
+    origen: String(m.origen),
+    repartos: repartos || []
+  };
+}
+
+/**
+ * Gastos propios "Por revisar" con la misma glosa que uno recién confirmado:
+ * ahora el diccionario ya sabe cómo clasificarlos. Cada uno se sigue
+ * confirmando por separado.
+ */
+function pendientesConGlosa_(usuario, glosa, excluirId) {
+  const buscada = normalizarGlosa_(glosa);
+  if (!buscada) {
+    return [];
+  }
+  return leerTabla_('Movimientos')
+    .filter(function (m) {
+      return m.estado === 'Por revisar' && m.usuario_id === usuario.id && m.id !== excluirId &&
+        normalizarGlosa_(glosaDe_(m)) === buscada;
+    })
+    .map(function (m) { return publicarMovimiento_(m); });
 }
 
 /**
@@ -89,11 +111,13 @@ function revisarDuplicados_(usuario, datos) {
 /**
  * Guarda UN gasto. Si se parece a otro ya guardado, no lo guarda y devuelve
  * las alertas, salvo que venga confirmarDuplicado = true ("Guardar igual").
+ * Con porRevisar = true se guarda sin tipo ni categoría, para decidir después.
  */
 function guardarMovimiento_(usuario, datos) {
-  const v = validarMovimiento_(datos);
+  const porRevisar = datos.porRevisar === true;
+  const v = porRevisar ? validarDatosBasicos_(datos) : validarMovimiento_(datos);
   return conCandado_(function () {
-    const candidato = { fecha: v.fecha, monto: v.monto, glosa: normalizar_(v.descripcion) };
+    const candidato = { fecha: v.fecha, monto: v.monto, glosa: normalizar_(v.glosa) };
     const alertas = buscarDuplicados_(usuario, candidato, huellasExistentes_());
     if (alertas.length && datos.confirmarDuplicado !== true) {
       return { guardado: false, duplicados: alertas };
@@ -105,22 +129,25 @@ function guardarMovimiento_(usuario, datos) {
       monto: v.monto,
       descripcion: v.descripcion,
       usuario_id: usuario.id,
-      tipo: v.tipo,
-      categoria_id: v.categoria.id,
-      rendir_trabajo: v.rendir ? 'Sí' : 'No',
-      estado: 'Confirmado',
+      tipo: porRevisar ? '' : v.tipo,
+      categoria_id: porRevisar ? '' : v.categoria.id,
+      rendir_trabajo: !porRevisar && v.rendir ? 'Sí' : 'No',
+      estado: porRevisar ? 'Por revisar' : 'Confirmado',
       origen: v.origen,
-      huella: huella_(v.fecha, v.monto, v.descripcion),
+      huella: huella_(v.fecha, v.monto, v.glosa),
       duplicado_revisado: alertas.length ? 'Sí' : '',
       creado_en: new Date(),
       modificado_en: ''
     };
     agregarFilas_('Movimientos', [movimiento]);
+    if (porRevisar) {
+      return { guardado: true, id: movimiento.id, pendientes: [] };
+    }
     if (v.tipo === 'Familiar') {
       agregarFilas_('Repartos', calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto));
     }
-    aprenderGlosa_(v.descripcion, v.tipo, v.categoria.id);
-    return { guardado: true, id: movimiento.id };
+    aprenderGlosa_(v.glosa, v.tipo, v.categoria.id);
+    return { guardado: true, id: movimiento.id, pendientes: pendientesConGlosa_(usuario, v.glosa, movimiento.id) };
   });
 }
 
@@ -149,10 +176,13 @@ function actualizarMovimiento_(usuario, datos) {
     function valor(campo) {
       return Object.prototype.hasOwnProperty.call(datos, campo) ? datos[campo] : movimiento[campo];
     }
+    // Si no llega la glosa por separado, se separa la descripción guardada ("glosa — detalle").
+    const partesDescripcion = String(movimiento.descripcion).split(SEPARADOR_DETALLE);
     const v = validarMovimiento_({
       fecha: valor('fecha'),
       monto: valor('monto'),
-      descripcion: valor('descripcion'),
+      descripcion: Object.prototype.hasOwnProperty.call(datos, 'descripcion') ? datos.descripcion : partesDescripcion[0],
+      detalle: Object.prototype.hasOwnProperty.call(datos, 'detalle') ? datos.detalle : partesDescripcion.slice(1).join(SEPARADOR_DETALLE),
       tipo: valor('tipo'),
       categoria_id: valor('categoria_id'),
       rendir_trabajo: Object.prototype.hasOwnProperty.call(datos, 'rendir_trabajo')
@@ -160,9 +190,10 @@ function actualizarMovimiento_(usuario, datos) {
       origen: movimiento.origen
     });
 
+    // La huella usa solo la glosa del banco: cambiar el detalle no la altera.
     const fechaAnterior = leerFecha_(movimiento.fecha);
     const cambioHuella = !fechaAnterior || fechaIso_(fechaAnterior) !== fechaIso_(v.fecha) ||
-      Number(movimiento.monto) !== v.monto || String(movimiento.descripcion) !== v.descripcion;
+      Number(movimiento.monto) !== v.monto || normalizar_(glosaDe_(movimiento)) !== normalizar_(v.glosa);
     const cambioClasificacion = movimiento.tipo !== v.tipo ||
       movimiento.categoria_id !== v.categoria.id || movimiento.estado !== 'Confirmado';
     const cambioReparto = cambioHuella || cambioClasificacion;
@@ -176,7 +207,7 @@ function actualizarMovimiento_(usuario, datos) {
     movimiento.estado = 'Confirmado';
     movimiento.modificado_en = new Date();
     if (cambioHuella) {
-      movimiento.huella = huella_(v.fecha, v.monto, v.descripcion);
+      movimiento.huella = huella_(v.fecha, v.monto, v.glosa);
     }
     actualizarFila_('Movimientos', movimiento);
 
@@ -186,15 +217,19 @@ function actualizarMovimiento_(usuario, datos) {
         agregarFilas_('Repartos', calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto));
       }
     }
-    if (cambioClasificacion) {
-      aprenderGlosa_(glosaDe_(movimiento), v.tipo, v.categoria.id);
+    if (!cambioClasificacion) {
+      return { actualizado: true, pendientes: [] };
     }
-    return { actualizado: true };
+    aprenderGlosa_(glosaDe_(movimiento), v.tipo, v.categoria.id);
+    return { actualizado: true, pendientes: pendientesConGlosa_(usuario, glosaDe_(movimiento), movimiento.id) };
   });
 }
 
-/** Valida los datos de un gasto y devuelve los valores limpios. */
-function validarMovimiento_(datos) {
+/**
+ * Fecha, monto, glosa del banco y detalle opcional. La descripción que se
+ * guarda es "glosa — detalle", igual que en el historial.
+ */
+function validarDatosBasicos_(datos) {
   const fecha = leerFecha_(datos.fecha);
   if (!fecha) {
     throw errorPublico_('La fecha no es válida.');
@@ -203,10 +238,23 @@ function validarMovimiento_(datos) {
   if (!monto) {
     throw errorPublico_('El monto no es válido.');
   }
-  const descripcion = textoSeguro_(datos.descripcion, 200);
-  if (!descripcion) {
-    throw errorPublico_('Falta la descripción.');
+  const glosa = textoSeguro_(datos.descripcion, 200);
+  if (!glosa) {
+    throw errorPublico_('Falta la glosa.');
   }
+  const detalle = textoSeguro_(datos.detalle, 100);
+  return {
+    fecha: fecha,
+    monto: monto,
+    glosa: glosa,
+    descripcion: detalle ? glosa + SEPARADOR_DETALLE + detalle : glosa,
+    origen: ORIGENES.indexOf(datos.origen) >= 0 ? datos.origen : 'manual'
+  };
+}
+
+/** Valida un gasto completo (con tipo y categoría) y devuelve los valores limpios. */
+function validarMovimiento_(datos) {
+  const v = validarDatosBasicos_(datos);
   if (TIPOS.indexOf(datos.tipo) < 0) {
     throw errorPublico_('Debes confirmar si el gasto es Familiar o Personal.');
   }
@@ -214,15 +262,10 @@ function validarMovimiento_(datos) {
   if (!categoria || !esSi_(categoria.activa) || categoria.tipo !== datos.tipo) {
     throw errorPublico_('Elige una categoría vigente del tipo ' + datos.tipo + '.');
   }
-  return {
-    fecha: fecha,
-    monto: monto,
-    descripcion: descripcion,
-    tipo: datos.tipo,
-    categoria: categoria,
-    rendir: datos.tipo === 'Personal' && datos.rendir_trabajo === true,
-    origen: ORIGENES.indexOf(datos.origen) >= 0 ? datos.origen : 'manual'
-  };
+  v.tipo = datos.tipo;
+  v.categoria = categoria;
+  v.rendir = datos.tipo === 'Personal' && datos.rendir_trabajo === true;
+  return v;
 }
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,10 @@
 
 const CRITERIOS_FAMILIARES = ['Proporcional', '50/50', '100%'];
 
-/** Todas las categorías, incluidas las desactivadas (el historial las usa). */
+/**
+ * Todas las categorías, incluidas las desactivadas (el historial las usa).
+ * Orden: categorías en orden alfabético y, dentro de cada una, por "orden".
+ */
 function listarCategorias_() {
   return leerTabla_('Categorias')
     .map(function (c) {
@@ -19,7 +22,10 @@ function listarCategorias_() {
         orden: Number(c.orden) || 0
       };
     })
-    .sort(function (a, b) { return a.orden - b.orden; });
+    .sort(function (a, b) {
+      return a.categoria.localeCompare(b.categoria, 'es') || a.orden - b.orden ||
+        a.subcategoria.localeCompare(b.subcategoria, 'es');
+    });
 }
 
 /**
@@ -72,7 +78,10 @@ function guardarCategoria_(usuario, datos) {
       }
     }
 
-    const ordenMaximo = categorias.reduce(function (max, c) { return Math.max(max, Number(c.orden) || 0); }, 0);
+    // El orden es dentro de la categoría: una subcategoría nueva queda al final de la suya.
+    const ordenMaximo = categorias
+      .filter(function (c) { return c.tipo === tipo && normalizar_(c.categoria) === normalizar_(nombre); })
+      .reduce(function (max, c) { return Math.max(max, Number(c.orden) || 0); }, 0);
     const fila = existente || { id: siguienteIdCategoria_(categorias), tipo: tipo };
     fila.categoria = nombre;
     fila.subcategoria = subcategoria;

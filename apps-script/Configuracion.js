@@ -100,6 +100,33 @@ function crearPestanaSiNoExiste_(planilla, nombre, columnas) {
 }
 
 /**
+ * Renumera el orden de las subcategorías como 1, 2, 3… dentro de cada
+ * categoría, respetando el orden que tenían. Se ejecuta a mano una vez desde
+ * el editor. Es seguro ejecutarla de nuevo: solo reordena la columna "orden".
+ */
+function renumerarOrdenCategorias() {
+  const categorias = leerTabla_('Categorias');
+  const grupos = {};
+  categorias.forEach(function (c) {
+    const clave = c.tipo + '|' + normalizar_(c.categoria);
+    (grupos[clave] = grupos[clave] || []).push(c);
+  });
+  let cambios = 0;
+  Object.keys(grupos).forEach(function (clave) {
+    grupos[clave]
+      .sort(function (a, b) { return (Number(a.orden) || 0) - (Number(b.orden) || 0); })
+      .forEach(function (c, i) {
+        if (Number(c.orden) !== i + 1) {
+          c.orden = i + 1;
+          actualizarFila_('Categorias', c);
+          cambios++;
+        }
+      });
+  });
+  Logger.log('Subcategorías renumeradas: ' + cambios + ' de ' + categorias.length);
+}
+
+/**
  * Borra las hojas vacías que Google crea por defecto ("Hoja 1" o "Sheet1"),
  * pero solo si no son parte de la estructura y no tienen ningún dato.
  */

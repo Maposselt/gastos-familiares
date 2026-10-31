@@ -10,8 +10,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=6">
-  <script src="app.js?v=6" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=7">
+  <script src="app.js?v=7" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -56,7 +56,11 @@
         <label class="casilla"><input type="checkbox" id="filtro-anulados"> Mostrar anulados</label>
       </div>
       <div id="totales-mes" class="totales"></div>
-      <ul id="lista-gastos" class="lista"></ul>
+      <div class="selector-vista" role="group" aria-label="Vista">
+        <button type="button" data-vista="lista" aria-pressed="true">📋 Lista</button>
+        <button type="button" data-vista="resumen" aria-pressed="false">📊 Resumen por categoría</button>
+      </div>
+      <div id="lista-gastos"></div>
     </section>
 
     <section id="pantalla-ingresos" class="pantalla" hidden>

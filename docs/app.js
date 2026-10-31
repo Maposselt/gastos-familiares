@@ -9,7 +9,8 @@
  */
 'use strict';
 
-const CLIENT_ID = '1065565340039-h85i836u1mip2j9ohjtfcmc3njhgt5u6.apps.googleusercontent.com';
+const SEPARADOR_DETALLE = ' — ';
+const CLIENT_ID ='1065565340039-h85i836u1mip2j9ohjtfcmc3njhgt5u6.apps.googleusercontent.com';
 const URL_BACKEND = 'https://script.google.com/macros/s/AKfycbwvyxaaDEZ_cst7K3kg7etnj4Mn-2jEB4Jh4Qrk79EVViBhNB55gyWflDIzEe65tP-O/exec';
 
 const estado = {
@@ -21,7 +22,8 @@ const estado = {
   categorias: [],
   movimientos: null,
   ingresos: null,
-  pantalla: 'nuevo'
+  pantalla: 'nuevo',
+  vistaGastos: 'lista'
 };
 
 // ---------------------------------------------------------------------------
@@ -325,15 +327,27 @@ function formularioGasto(opciones) {
   let consultaActual = 0;
   let temporizadorSugerencia = null;
 
-  const fecha = el('input', { type: 'date', value: inicial.fecha || hoyIso(), max: '2100-12-31' });
+  // La descripción guardada es "glosa — detalle": aquí se separan para editarlas.
+  const [glosaInicial, ...restoDetalle] = String(inicial.descripcion || '').split(SEPARADOR_DETALLE);
+  const fecha = campoFecha(el('input', {
+    type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'DD/MM/AAAA', maxlength: '10',
+    'aria-label': 'Fecha', value: fechaVisible(inicial.fecha || hoyIso())
+  }));
   const monto = campoMonto(el('input', {
-    type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: '0',
+    type: 'text', inputmode: 'numeric', autocomplete: 'off', placeholder: 'Monto', 'aria-label': 'Monto',
     value: inicial.monto ? Number(inicial.monto).toLocaleString('es-CL') : ''
   }));
-  const descripcion = el('input', { type: 'text', maxlength: '200', autocomplete: 'off', value: inicial.descripcion || '' });
-  const botonFamiliar = el('button', { type: 'button', 'aria-pressed': 'false', text: '👨‍👩‍👧 Familiar' });
-  const botonPersonal = el('button', { type: 'button', 'aria-pressed': 'false', text: '🙋 Personal' });
-  const categoria = el('select', { disabled: true });
+  const descripcion = el('input', {
+    type: 'text', maxlength: '200', autocomplete: 'off', 'aria-label': 'Glosa',
+    placeholder: 'Glosa (como sale en la cartola)', value: glosaInicial
+  });
+  const detalle = el('input', {
+    type: 'text', maxlength: '100', autocomplete: 'off', 'aria-label': 'Detalle',
+    placeholder: 'Detalle opcional: negocio o motivo', value: restoDetalle.join(SEPARADOR_DETALLE)
+  });
+  const botonFamiliar = el('button', { type: 'button', 'aria-pressed': 'false', text: opciones.compacto ? 'Familiar' : '👨‍👩‍👧 Familiar' });
+  const botonPersonal = el('button', { type: 'button', 'aria-pressed': 'false', text: opciones.compacto ? 'Personal' : '🙋 Personal' });
+  const categoria = el('select', { disabled: true, 'aria-label': 'Categoría' });
   const pistaCategoria = el('p', { class: 'nota' });
   const pistaSugerencia = el('p', { class: 'sugerencia', hidden: true });
   const rendir = el('input', { type: 'checkbox', checked: !!inicial.rendir_trabajo });
@@ -454,41 +468,107 @@ function formularioGasto(opciones) {
     buscarSugerencia({ id: opciones.idMovimiento });
   }
 
-  boton.addEventListener('click', () => {
-    error.textContent = '';
-    const datos = {
-      fecha: fecha.value,
+  function leerDatos() {
+    return {
+      fecha: fechaDeCelda(fecha.value.trim()),
       monto: leerMonto(monto),
       descripcion: descripcion.value.trim(),
+      detalle: detalle.value.trim(),
       tipo: tipo,
       categoria_id: categoria.value,
       rendir_trabajo: tipo === 'Personal' && rendir.checked
     };
-    const faltante = !datos.fecha ? 'Falta la fecha.'
+  }
+
+  function faltanDatosBasicos(datos) {
+    return !datos.fecha ? 'La fecha no es válida (usa DD/MM/AAAA).'
       : !datos.monto ? 'Falta el monto.'
-        : !datos.descripcion ? 'Falta la descripción.'
-          : !datos.tipo ? 'Elige si el gasto es Familiar o Personal.'
-            : !datos.categoria_id ? 'Elige una categoría.' : '';
-    if (faltante) {
-      error.textContent = faltante;
-      return;
+        : !datos.descripcion ? 'Falta la glosa.' : '';
+  }
+
+  boton.addEventListener('click', () => {
+    const datos = leerDatos();
+    const faltante = faltanDatosBasicos(datos) ||
+      (!datos.tipo ? 'Elige si el gasto es Familiar o Personal.' : !datos.categoria_id ? 'Elige una categoría.' : '');
+    error.textContent = faltante;
+    if (!faltante) {
+      intentar(boton, () => opciones.alGuardar(datos));
     }
-    intentar(boton, () => opciones.alGuardar(datos));
   });
 
+  // "Por revisar": se guarda sin tipo ni categoría, para decidir más adelante.
+  let botonPendiente = null;
+  if (opciones.alDejarPendiente) {
+    botonPendiente = el('button', { type: 'button', text: '⏸ Por revisar', title: 'Guardar sin tipo ni categoría para decidir después' });
+    botonPendiente.addEventListener('click', () => {
+      const datos = leerDatos();
+      const faltante = faltanDatosBasicos(datos);
+      error.textContent = faltante;
+      if (!faltante) {
+        intentar(botonPendiente, () => opciones.alDejarPendiente(datos));
+      }
+    });
+  }
+
+  const selectorTipo = el('div', { class: 'selector-tipo', role: 'group', 'aria-label': 'Tipo' }, botonFamiliar, botonPersonal);
+  const notaTipo = opciones.sugerenciaTipo
+    ? el('p', { class: 'nota', text: 'Según tu marca antigua: ' + opciones.sugerenciaTipo + '. Confírmalo eligiéndolo.' })
+    : null;
+  const acciones = el('div', { class: 'acciones' }, boton, botonPendiente, opciones.botonesExtra || []);
+
+  if (opciones.compacto) {
+    return el('div', { class: 'fila-compacta' },
+      el('div', { class: 'fc-datos' }, fecha, descripcion, monto),
+      detalle,
+      pistaSugerencia,
+      notaTipo,
+      el('div', { class: 'fc-clasificar' }, selectorTipo, categoria, filaRendir),
+      pistaCategoria,
+      error,
+      acciones);
+  }
   return el('div', { class: 'tarjeta' },
     el('label', {}, 'Fecha', fecha),
     el('label', {}, 'Monto', monto),
-    el('label', {}, 'Descripción', descripcion),
+    el('label', {}, 'Glosa', descripcion),
+    el('label', {}, 'Detalle (opcional)', detalle),
     pistaSugerencia,
     el('div', { class: 'etiqueta-campo', text: 'Tipo' }),
-    opciones.sugerenciaTipo ? el('p', { class: 'nota', text: 'Según tu marca antigua: ' + opciones.sugerenciaTipo + '. Confírmalo eligiéndolo.' }) : null,
-    el('div', { class: 'selector-tipo' }, botonFamiliar, botonPersonal),
+    notaTipo,
+    selectorTipo,
     el('label', {}, 'Categoría', categoria),
     pistaCategoria,
     filaRendir,
     error,
-    el('div', { class: 'acciones' }, boton, opciones.botonesExtra || []));
+    acciones);
+}
+
+/** Campo de fecha DD/MM/AAAA: agrega las barras mientras se escribe. */
+function campoFecha(input) {
+  input.addEventListener('input', () => {
+    const digitos = input.value.replace(/\D/g, '').slice(0, 8);
+    input.value = [digitos.slice(0, 2), digitos.slice(2, 4), digitos.slice(4)].filter(Boolean).join('/');
+  });
+  return input;
+}
+
+/** Aviso cuando un gasto confirmado resuelve otros que estaban "Por revisar". */
+function mostrarPendientes(pendientes) {
+  if (!pendientes || !pendientes.length) {
+    return;
+  }
+  const dialogo = $('dialogo');
+  vaciar(dialogo,
+    el('h3', { text: '💡 Encontramos la categoría de ' + pendientes.length + (pendientes.length === 1 ? ' gasto que estaba' : ' gastos que estaban') + ' por revisar' }),
+    el('p', { class: 'nota', text: 'Tienen la misma glosa que el gasto que acabas de confirmar. Revisa y confirma cada uno.' }),
+    el('ul', { class: 'lista' }, pendientes.map((m) => el('li', { class: 'fila-pendiente' },
+      el('span', { text: fechaVisible(m.fecha) + ' · ' + m.descripcion + ' · ' + pesos(m.monto) }),
+      el('button', { type: 'button', text: 'Revisar', onclick: () => abrirEdicion(m) })))),
+    el('div', { class: 'acciones' },
+      el('button', { type: 'button', text: 'Más tarde', onclick: () => dialogo.close() })));
+  if (!dialogo.open) {
+    dialogo.showModal();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -499,7 +579,8 @@ function pintarNuevo(fechaAnterior) {
   vaciar($('contenedor-nuevo'), formularioGasto({
     inicial: { fecha: fechaAnterior },
     textoBoton: 'Guardar gasto',
-    alGuardar: (datos) => guardarNuevo(datos, false)
+    alGuardar: (datos) => guardarNuevo(datos, false),
+    alDejarPendiente: (datos) => guardarNuevo(Object.assign({}, datos, { porRevisar: true }), false)
   }));
 }
 
@@ -509,8 +590,9 @@ async function guardarNuevo(datos, confirmarDuplicado) {
   }));
   if (r.guardado) {
     estado.movimientos = null;
-    avisar('Gasto guardado.');
+    avisar(datos.porRevisar ? 'Gasto guardado como "Por revisar".' : 'Gasto guardado.');
     pintarNuevo(datos.fecha);
+    mostrarPendientes(r.pendientes);
     return;
   }
   mostrarDuplicados(r.duplicados, {
@@ -523,9 +605,10 @@ async function guardarNuevo(datos, confirmarDuplicado) {
 function mostrarDuplicados(alertas, acciones) {
   const dialogo = $('dialogo');
   const botonGuardar = el('button', { type: 'button', class: 'principal', text: 'Guardar igual' });
-  botonGuardar.addEventListener('click', async () => {
-    await intentar(botonGuardar, acciones.guardarIgual);
+  botonGuardar.addEventListener('click', () => {
+    // Se cierra antes, porque al guardar puede abrirse el aviso de pendientes.
     dialogo.close();
+    intentar(null, acciones.guardarIgual);
   });
   vaciar(dialogo,
     el('h3', { text: 'Este gasto se parece a otro ya registrado' }),
@@ -770,66 +853,135 @@ async function importarArchivo(archivo) {
   try {
     const buffer = await archivo.arrayBuffer();
     const filas = /\.csv$/i.test(archivo.name) ? leerCsv(buffer) : await leerExcel(buffer);
-    const detectado = detectarColumnas(filas);
-    if (detectado) {
-      await prepararRevision(filas.slice(detectado.encabezado + 1), detectado.columnas, archivo.name);
-    } else {
-      elegirColumnas(filas, archivo.name);
-    }
+    const detectado = detectarColumnas(filas) || adivinarColumnas(filas);
+    mostrarVistaPrevia(filas, detectado, archivo.name);
   } catch (error) {
     avisar('No pude leer el archivo: ' + error.message, true);
     cerrarImportacion();
   }
 }
 
-/** Si no se reconocen los encabezados, el usuario indica qué columna es cada dato. */
-function elegirColumnas(filas, nombreArchivo) {
-  const ejemplo = filas.find((f) => f.filter((v) => v !== '').length >= 3) || filas[0] || [];
-  const cantidad = Math.max(...filas.slice(0, 15).map((f) => f.length), 0);
-  const selectores = {};
-  const campos = [];
-  Object.entries({ fecha: 'Fecha', descripcion: 'Descripción', monto: 'Monto' }).forEach(([campo, titulo]) => {
-    selectores[campo] = el('select', {},
-      Array.from({ length: cantidad }, (x, j) => el('option', {
-        value: String(j), text: 'Columna ' + letraColumna(j) + (ejemplo[j] !== undefined && ejemplo[j] !== '' ? ' (ej.: ' + String(ejemplo[j]).slice(0, 30) + ')' : '')
-      })));
-    campos.push(el('label', {}, titulo, selectores[campo]));
+/**
+ * Si el archivo no tiene títulos, deduce las columnas por su contenido:
+ * fechas (texto o números de Excel que caen en un rango corto de días),
+ * montos (números) y glosa (textos).
+ */
+function adivinarColumnas(filas) {
+  const muestra = filas.slice(0, 40).filter((f) => f.some((v) => v !== ''));
+  const cantidad = Math.max(0, ...muestra.map((f) => f.length));
+  const puntajes = Array.from({ length: cantidad }, (x, j) => {
+    const valores = muestra.map((f) => f[j]).filter((v) => v !== '' && v !== undefined);
+    const numeros = valores.filter((v) => typeof v === 'number');
+    const rangoCorto = numeros.length > 0 && Math.max(...numeros) - Math.min(...numeros) < 1000;
+    return {
+      fechas: valores.filter((v) => (typeof v === 'number' ? rangoCorto : true) && fechaDeCelda(v)).length,
+      montos: valores.filter((v) => montoDeCelda(v) !== 0).length,
+      textos: valores.filter((v) => typeof v === 'string' && /[a-záéíóúñ]{3}/i.test(v) && !fechaDeCelda(v)).length
+    };
   });
-  const conEncabezado = el('input', { type: 'checkbox', checked: true });
-  const boton = el('button', { type: 'button', class: 'principal', text: 'Continuar' });
-  boton.addEventListener('click', () => intentar(boton, () => {
-    const columnas = {};
-    Object.keys(selectores).forEach((campo) => { columnas[campo] = Number(selectores[campo].value); });
-    return prepararRevision(conEncabezado.checked ? filas.slice(1) : filas, columnas, nombreArchivo);
-  }));
-  vaciar($('contenedor-importacion'), el('div', { class: 'tarjeta' },
-    el('h3', { text: 'No reconocí las columnas de ' + nombreArchivo }),
-    el('p', { class: 'nota', text: 'Indica en qué columna está cada dato.' }),
-    campos,
-    el('label', { class: 'casilla' }, conEncabezado, 'La primera fila son títulos'),
-    el('div', { class: 'acciones' }, boton,
-      el('button', { type: 'button', text: 'Cancelar', onclick: cerrarImportacion }))));
+  const mejor = (campo, excluir) => puntajes
+    .map((p, j) => ({ j: j, valor: p[campo] }))
+    .filter((p) => excluir.indexOf(p.j) < 0)
+    .sort((a, b) => b.valor - a.valor)[0];
+  const fecha = mejor('fechas', []);
+  const descripcion = mejor('textos', [fecha ? fecha.j : -1]);
+  const monto = mejor('montos', [fecha ? fecha.j : -1, descripcion ? descripcion.j : -1]);
+  return {
+    encabezado: -1,
+    columnas: { fecha: fecha ? fecha.j : 0, descripcion: descripcion ? descripcion.j : 0, monto: monto ? monto.j : 0 }
+  };
 }
 
-/** Arma la lista de gastos, revisa duplicados y busca sugerencias para todos de una vez. */
-async function prepararRevision(filas, columnas, nombreArchivo) {
+/**
+ * Convierte las filas en gastos. Si una fila no trae fecha (algunas cartolas
+ * la ponen solo en el primer gasto del día), usa la de la fila anterior.
+ */
+function armarItems(filas, columnas) {
   const items = [];
   let omitidas = 0;
+  let fechaAnterior = '';
   filas.forEach((f) => {
     if (!f.some((v) => v !== '')) {
       return;
     }
+    const fechaPropia = fechaDeCelda(f[columnas.fecha]);
     const item = {
-      fecha: fechaDeCelda(f[columnas.fecha]),
+      fecha: fechaPropia || (f[columnas.fecha] === '' || f[columnas.fecha] === undefined ? fechaAnterior : ''),
       monto: montoDeCelda(f[columnas.monto]),
-      descripcion: String(f[columnas.descripcion] || '').trim().slice(0, 200)
+      descripcion: String(f[columnas.descripcion] === undefined ? '' : f[columnas.descripcion]).trim().slice(0, 200)
     };
+    if (fechaPropia) {
+      fechaAnterior = fechaPropia;
+    }
     if (item.fecha && item.monto && item.descripcion) {
       items.push(item);
     } else {
       omitidas++;
     }
   });
+  return { items: items, omitidas: omitidas };
+}
+
+/** Muestra cómo quedarán las primeras filas, con las columnas elegidas, antes de continuar. */
+function mostrarVistaPrevia(filas, detectado, nombreArchivo) {
+  const cantidad = Math.max(0, ...filas.slice(0, 40).map((f) => f.length));
+  const ejemplo = filas.find((f, i) => i > detectado.encabezado && f.filter((v) => v !== '').length >= 2) || [];
+  const selectores = {};
+  const campos = Object.entries({ fecha: 'Fecha', descripcion: 'Glosa', monto: 'Monto' }).map(([campo, titulo]) => {
+    selectores[campo] = el('select', {},
+      Array.from({ length: cantidad }, (x, j) => el('option', {
+        value: String(j),
+        text: 'Columna ' + letraColumna(j) + (ejemplo[j] !== undefined && ejemplo[j] !== '' ? ' (ej.: ' + String(ejemplo[j]).slice(0, 25) + ')' : '')
+      })));
+    selectores[campo].value = String(detectado.columnas[campo]);
+    selectores[campo].addEventListener('change', actualizar);
+    return el('label', {}, titulo, selectores[campo]);
+  });
+  const conTitulos = el('input', { type: 'checkbox', checked: detectado.encabezado >= 0 });
+  conTitulos.addEventListener('change', actualizar);
+  const previa = el('div', { class: 'tabla-contenedor' });
+  const resumen = el('p', { class: 'nota' });
+  const boton = el('button', { type: 'button', class: 'principal', text: 'Continuar' });
+  let resultado = { items: [], omitidas: 0 };
+
+  function columnasElegidas() {
+    const columnas = {};
+    Object.keys(selectores).forEach((campo) => { columnas[campo] = Number(selectores[campo].value); });
+    return columnas;
+  }
+  function filasDeDatos() {
+    const desde = conTitulos.checked ? Math.max(detectado.encabezado, 0) + 1 : 0;
+    return filas.slice(desde);
+  }
+  function actualizar() {
+    resultado = armarItems(filasDeDatos(), columnasElegidas());
+    resumen.textContent = resultado.items.length + ' gastos listos para revisar' +
+      (resultado.omitidas ? ' · ' + resultado.omitidas + ' filas sin fecha, glosa o monto válidos se omitirán' : '') + '.';
+    vaciar(previa, el('table', { class: 'tabla tabla-gastos' },
+      el('thead', {}, el('tr', {}, el('th', { text: 'Fecha' }), el('th', { text: 'Glosa' }), el('th', { text: 'Monto' }))),
+      el('tbody', {}, resultado.items.slice(0, 5).map((i) => el('tr', {},
+        el('td', { text: fechaVisible(i.fecha) }), el('td', { text: i.descripcion }), el('td', { text: pesos(i.monto) }))))));
+    boton.disabled = !resultado.items.length;
+  }
+  boton.addEventListener('click', () => intentar(boton, () => prepararRevision(resultado, nombreArchivo)));
+  actualizar();
+
+  vaciar($('contenedor-importacion'), el('div', { class: 'tarjeta' },
+    el('h3', { text: '📄 ' + nombreArchivo }),
+    el('p', { class: 'nota', text: 'Revisa que las primeras filas se vean bien. Si no, cambia las columnas.' }),
+    el('div', { class: 'columnas-importacion' }, campos),
+    el('label', { class: 'casilla' }, conTitulos, 'La primera fila son títulos'),
+    el('h3', { text: 'Vista previa' }),
+    previa,
+    resumen,
+    el('div', { class: 'acciones' }, boton,
+      el('button', { type: 'button', text: 'Cancelar', onclick: cerrarImportacion }))));
+}
+
+/** Revisa duplicados y busca sugerencias para todos los gastos de una vez. */
+async function prepararRevision(resultado, nombreArchivo) {
+  const items = resultado.items.slice();
+  const omitidas = resultado.omitidas;
   let recortadas = 0;
   if (items.length > MAXIMO_FILAS_IMPORTACION) {
     recortadas = items.length - MAXIMO_FILAS_IMPORTACION;
@@ -864,26 +1016,28 @@ function pintarRevision(items, duplicados, sugerencias, info) {
   }
 
   const tarjetas = items.map((item, i) => {
-    const caja = el('li', { class: 'tarjeta-importacion' });
+    const caja = el('li', { class: 'fila-importacion' });
     function terminar(texto) {
       revisados++;
       actualizarContador();
-      vaciar(caja, el('p', { class: 'nota', text: texto + ': ' + fechaVisible(item.fecha) + ' · ' + item.descripcion + ' · ' + pesos(item.monto) }));
+      caja.classList.add('terminada');
+      vaciar(caja, el('p', { class: 'nota', text: (i + 1) + '. ' + texto + ': ' + fechaVisible(item.fecha) + ' · ' + item.descripcion + ' · ' + pesos(item.monto) }));
       estado.movimientos = null;
     }
     const alertas = (duplicados[i] && duplicados[i].alertas) || [];
-    const avisosDuplicado = alertas.map((a) => el('div', { class: 'alerta ' + a.nivel },
+    const avisosDuplicado = alertas.map((a) => el('div', { class: 'alerta compacta ' + a.nivel },
       a.enEstaCarga !== undefined
         ? (a.nivel === 'rojo' ? '🔴' : '🟡') + ' Se repite en el gasto ' + (a.enEstaCarga + 1) + ' de este archivo'
         : (a.nivel === 'rojo' ? '🔴 Ya registrado: ' : '🟡 Parecido a: ') + fechaVisible(a.fecha) + ' · ' + a.descripcion + ' · ' + pesos(a.monto)));
-    const descartar = el('button', { type: 'button', class: 'peligro', text: 'Descartar', onclick: () => terminar('🗑️ Descartado') });
+    const descartar = el('button', { type: 'button', class: 'peligro', text: '🗑 Descartar', onclick: () => terminar('🗑️ Descartado') });
 
     async function guardar(datos, confirmarDuplicado) {
       const r = await llamar('guardarMovimiento', Object.assign({}, datos, {
         origen: 'excel', confirmarDuplicado: confirmarDuplicado
       }));
       if (r.guardado) {
-        terminar('✅ Guardado');
+        terminar(datos.porRevisar ? '⏸ Por revisar' : '✅ Guardado');
+        mostrarPendientes(r.pendientes);
         return;
       }
       mostrarDuplicados(r.duplicados, {
@@ -893,14 +1047,16 @@ function pintarRevision(items, duplicados, sugerencias, info) {
     }
 
     vaciar(caja,
-      el('div', { class: 'numero-importacion', text: 'Gasto ' + (i + 1) + ' de ' + items.length }),
+      el('div', { class: 'numero-importacion', text: (i + 1) + ' de ' + items.length }),
       avisosDuplicado,
       formularioGasto({
+        compacto: true,
         inicial: item,
         sugerenciaInicial: sugerencias[i],
-        textoBoton: 'Guardar',
+        textoBoton: '💾 Guardar',
         botonesExtra: [descartar],
-        alGuardar: (datos) => guardar(datos, false)
+        alGuardar: (datos) => guardar(datos, false),
+        alDejarPendiente: (datos) => guardar(Object.assign({}, datos, { porRevisar: true }), false)
       }));
     return caja;
   });
@@ -917,14 +1073,14 @@ function pintarRevision(items, duplicados, sugerencias, info) {
     el('div', { class: 'cabecera-importacion' },
       el('h3', { text: '📄 ' + info.nombreArchivo }),
       contador,
-      el('p', { class: 'nota', text: 'Elige Familiar o Personal en cada gasto, revisa la categoría y guarda o descarta uno por uno.' }),
+      el('p', { class: 'nota', text: 'En cada gasto elige Familiar o Personal y revisa la categoría. Luego guárdalo, déjalo por revisar o descártalo.' }),
       avisos.map((a) => el('p', { class: 'nota', text: a })),
       el('button', { type: 'button', text: 'Cerrar importación', onclick: () => {
         if (revisados === items.length || confirm('Quedan gastos sin revisar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
           cerrarImportacion();
         }
       } })),
-    el('ul', { class: 'lista' }, tarjetas));
+    el('ul', { class: 'lista lista-importacion' }, tarjetas));
 }
 
 function cerrarImportacion() {
@@ -951,7 +1107,7 @@ async function pintarGastos() {
     $('filtro-mes').value = mesActual();
   }
   if (!estado.movimientos) {
-    vaciar(lista, el('li', { class: 'cargando', text: 'Cargando gastos…' }));
+    vaciar(lista, el('p', { class: 'cargando', text: 'Cargando gastos…' }));
     vaciar($('totales-mes'));
     vaciar($('por-revisar'));
   }
@@ -966,8 +1122,8 @@ async function pintarGastos() {
   vaciar($('por-revisar'), propiosPorRevisar.length
     ? el('details', { class: 'revisar' },
       el('summary', { text: 'Tienes ' + propiosPorRevisar.length + ' gastos por revisar' }),
-      el('p', { class: 'nota', text: 'Elige el tipo y la categoría de cada uno.' }),
-      el('ul', { class: 'lista' }, propiosPorRevisar.map(itemGasto)))
+      el('p', { class: 'nota', text: 'Toca uno para elegir su tipo y categoría.' }),
+      tablaGastos(propiosPorRevisar))
     : null);
 
   const mes = $('filtro-mes').value;
@@ -989,38 +1145,139 @@ async function pintarGastos() {
     tarjetaTotal('Mis personales', totalPersonal),
     totalRendir ? tarjetaTotal('Por rendir al trabajo', totalRendir) : null);
 
-  const visibles = delMes
-    .filter((m) => (!tipo || m.tipo === tipo) && (verAnulados || m.estado !== 'Anulado'))
+  document.querySelectorAll('.selector-vista button').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.vista === estado.vistaGastos));
+  });
+  const delTipo = delMes.filter((m) => !tipo || m.tipo === tipo);
+  if (estado.vistaGastos === 'resumen') {
+    vaciar(lista, resumenPorCategoria(delTipo.filter((m) => m.estado === 'Confirmado'), mes));
+    return;
+  }
+  const visibles = delTipo
+    .filter((m) => verAnulados || m.estado !== 'Anulado')
     .sort((a, b) => b.fecha.localeCompare(a.fecha));
   vaciar(lista, visibles.length
-    ? visibles.map(itemGasto)
-    : el('li', { class: 'nota', text: 'No hay gastos en ' + nombreMes(mes) + '.' }));
+    ? tablaGastos(visibles)
+    : el('p', { class: 'nota', text: 'No hay gastos en ' + nombreMes(mes) + '.' }));
 }
 
 function tarjetaTotal(titulo, monto) {
   return el('div', { class: 'total' }, el('span', { text: titulo }), el('strong', { text: pesos(monto) }));
 }
 
-function itemGasto(m) {
+/** Tabla compacta: Fecha · Glosa · Categoría · Pagó · Monto. Los gastos propios se abren para editar. */
+function tablaGastos(movimientos) {
+  return el('div', { class: 'tabla-contenedor' }, el('table', { class: 'tabla tabla-gastos' },
+    el('thead', {}, el('tr', {},
+      el('th', { text: 'Fecha' }), el('th', { text: 'Glosa' }), el('th', { text: 'Categoría' }),
+      el('th', { text: 'Pagó' }), el('th', { text: 'Monto' }))),
+    el('tbody', {}, movimientos.map(filaGasto))));
+}
+
+function filaGasto(m) {
   const propio = m.usuario_id === estado.usuario.id;
-  const meta = [fechaVisible(m.fecha), m.categoria_id ? etiquetaCategoria(m.categoria_id) : 'Sin categoría'];
-  if (m.tipo === 'Familiar') {
-    meta.push('pagó ' + nombreUsuario(m.usuario_id));
+  const clases = [m.tipo === 'Familiar' ? 'familiar' : '', m.estado === 'Anulado' ? 'anulado' : '', propio ? 'editable' : '']
+    .filter(Boolean).join(' ');
+  const fila = el('tr', { class: clases },
+    el('td', { text: fechaVisible(m.fecha).slice(0, 5) }),
+    el('td', { class: 'celda-glosa' },
+      m.descripcion,
+      m.estado !== 'Confirmado' ? el('span', { class: 'etiqueta', text: m.estado }) : null,
+      m.rendir_trabajo ? el('span', { class: 'etiqueta', text: 'Rendir' }) : null),
+    el('td', { text: m.categoria_id ? etiquetaCategoria(m.categoria_id) : '—' }),
+    el('td', { text: nombreUsuario(m.usuario_id) }),
+    el('td', { class: 'celda-monto', text: pesos(m.monto) }));
+  if (propio) {
+    fila.tabIndex = 0;
+    fila.setAttribute('aria-label', 'Editar ' + m.descripcion);
+    fila.addEventListener('click', () => abrirEdicion(m));
+    fila.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        abrirEdicion(m);
+      }
+    });
   }
-  const contenido = [
-    el('div', { class: 'gasto-detalle' },
-      el('div', { class: 'gasto-descripcion', text: m.descripcion }),
-      el('div', { class: 'gasto-meta', text: meta.join(' · ') }),
-      el('div', {},
-        m.tipo ? el('span', { class: 'etiqueta ' + m.tipo.toLowerCase(), text: m.tipo }) : null,
-        m.estado !== 'Confirmado' ? el('span', { class: 'etiqueta', text: m.estado }) : null,
-        m.rendir_trabajo ? el('span', { class: 'etiqueta', text: 'Rendir' }) : null)),
-    el('div', { class: 'gasto-monto', text: pesos(m.monto) })
-  ];
-  const clases = 'gasto' + (m.tipo === 'Familiar' ? ' familiar' : '') + (m.estado === 'Anulado' ? ' anulado' : '');
-  return el('li', {}, propio
-    ? el('button', { type: 'button', class: clases, 'aria-label': 'Editar ' + m.descripcion, onclick: () => abrirEdicion(m) }, contenido)
-    : el('div', { class: clases }, contenido));
+  return fila;
+}
+
+/**
+ * Total del mes por categoría y subcategoría. Al tocar una fila se
+ * despliegan (o se esconden) los gastos que la componen.
+ */
+function resumenPorCategoria(movimientos, mes) {
+  if (!movimientos.length) {
+    return el('p', { class: 'nota', text: 'No hay gastos confirmados en ' + nombreMes(mes) + '.' });
+  }
+  return ['Familiar', 'Personal'].map((tipo) => {
+    const delTipo = movimientos.filter((m) => m.tipo === tipo);
+    if (!delTipo.length) {
+      return null;
+    }
+    const grupos = new Map();
+    delTipo.forEach((m) => {
+      const c = categoriaPorId(m.categoria_id) || { categoria: 'Sin categoría', subcategoria: '—', orden: 0 };
+      if (!grupos.has(c.categoria)) {
+        grupos.set(c.categoria, new Map());
+      }
+      const subcategorias = grupos.get(c.categoria);
+      if (!subcategorias.has(c.subcategoria)) {
+        subcategorias.set(c.subcategoria, { orden: c.orden, gastos: [] });
+      }
+      subcategorias.get(c.subcategoria).gastos.push(m);
+    });
+
+    const suma = (lista) => lista.reduce((s, m) => s + m.monto, 0);
+    const filas = [];
+    Array.from(grupos.keys()).sort((a, b) => a.localeCompare(b, 'es')).forEach((nombre) => {
+      const subcategorias = Array.from(grupos.get(nombre).entries()).sort((a, b) => a[1].orden - b[1].orden);
+      const todos = subcategorias.flatMap(([, s]) => s.gastos);
+      const detallesCategoria = [];
+      const filaCategoria = filaDesplegable(
+        [el('td', { text: nombre }), el('td', { text: '' }), el('td', { class: 'celda-monto', text: String(todos.length) }), el('td', { class: 'celda-monto', text: pesos(suma(todos)) })],
+        'fila-categoria-resumen', detallesCategoria);
+      filas.push(filaCategoria);
+      subcategorias.forEach(([sub, s]) => {
+        const detalle = s.gastos.sort((a, b) => b.fecha.localeCompare(a.fecha)).map((m) => el('tr', { class: 'fila-detalle', hidden: true },
+          el('td', {}), el('td', { text: fechaVisible(m.fecha).slice(0, 5) + ' · ' + m.descripcion + (tipo === 'Familiar' ? ' · pagó ' + nombreUsuario(m.usuario_id) : '') }),
+          el('td', {}), el('td', { class: 'celda-monto', text: pesos(m.monto) })));
+        detallesCategoria.push(...detalle);
+        filas.push(filaDesplegable(
+          [el('td', {}), el('td', { text: sub }), el('td', { class: 'celda-monto', text: String(s.gastos.length) }), el('td', { class: 'celda-monto', text: pesos(suma(s.gastos)) })],
+          'fila-subcategoria-resumen', detalle));
+        filas.push(...detalle);
+      });
+    });
+    filas.push(el('tr', { class: 'fila-total' },
+      el('td', { text: 'Total ' + tipo.toLowerCase() }), el('td', {}),
+      el('td', { class: 'celda-monto', text: String(delTipo.length) }), el('td', { class: 'celda-monto', text: pesos(suma(delTipo)) })));
+
+    return el('div', { class: 'tarjeta' },
+      el('h3', { text: tipo === 'Familiar' ? '👨‍👩‍👧 Familiares' : '🙋 Personales' }),
+      el('div', { class: 'tabla-contenedor' }, el('table', { class: 'tabla tabla-resumen' },
+        el('thead', {}, el('tr', {},
+          el('th', { text: 'Categoría' }), el('th', { text: 'Subcategoría' }),
+          el('th', { text: 'N°' }), el('th', { text: 'Total' }))),
+        el('tbody', {}, filas))));
+  });
+}
+
+/** Fila que al tocarla muestra u oculta sus filas de detalle. */
+function filaDesplegable(celdas, clase, detalle) {
+  const fila = el('tr', { class: clase + ' desplegable', tabindex: '0', 'aria-expanded': 'false' }, celdas);
+  function alternar() {
+    const abrir = fila.getAttribute('aria-expanded') !== 'true';
+    fila.setAttribute('aria-expanded', String(abrir));
+    detalle.forEach((d) => { d.hidden = !abrir; });
+  }
+  fila.addEventListener('click', alternar);
+  fila.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      alternar();
+    }
+  });
+  return fila;
 }
 
 /** Corregir, confirmar, anular o restaurar un gasto propio. */
@@ -1053,18 +1310,24 @@ function abrirEdicion(m) {
       textoBoton: anulado ? 'Restaurar' : porRevisar ? 'Confirmar' : 'Guardar cambios',
       botonesExtra: extras,
       alGuardar: async (datos) => {
-        await llamar('actualizarMovimiento', Object.assign({ id: m.id }, datos));
+        const r = await llamar('actualizarMovimiento', Object.assign({ id: m.id }, datos));
         terminarEdicion(anulado ? 'Gasto restaurado.' : 'Cambios guardados.');
+        mostrarPendientes(r.pendientes);
       }
     }));
-  dialogo.showModal();
+  // Puede abrirse desde el aviso de pendientes, con el diálogo ya abierto.
+  if (!dialogo.open) {
+    dialogo.showModal();
+  }
 }
 
 function terminarEdicion(mensaje) {
   $('dialogo').close();
   estado.movimientos = null;
   avisar(mensaje);
-  pintarGastos();
+  if (estado.pantalla === 'gastos') {
+    pintarGastos();
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,7 +1538,7 @@ function abrirCategoria(c) {
     el('label', {}, 'Subcategoría', subcategoria),
     filaCriterio,
     filaUsuario,
-    el('label', {}, 'Orden (opcional)', orden),
+    el('label', {}, 'Orden dentro de la categoría (opcional)', orden),
     el('label', { class: 'casilla' }, activa, 'Activa'),
     el('p', { class: 'nota', text: 'Las categorías no se borran: se desactivan, porque el historial las usa.' }),
     el('div', { class: 'acciones' }, boton,
@@ -1293,6 +1556,12 @@ function iniciar() {
   });
   $('boton-salir').addEventListener('click', salir);
   ['filtro-mes', 'filtro-tipo', 'filtro-anulados'].forEach((id) => $(id).addEventListener('change', pintarGastos));
+  document.querySelectorAll('.selector-vista button').forEach((b) => {
+    b.addEventListener('click', () => {
+      estado.vistaGastos = b.dataset.vista;
+      pintarGastos();
+    });
+  });
   campoMonto($('ingreso-monto'));
   $('boton-ingreso').addEventListener('click', guardarIngreso);
   $('boton-nueva-categoria').addEventListener('click', () => abrirCategoria(null));

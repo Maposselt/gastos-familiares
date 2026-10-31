@@ -108,8 +108,19 @@ function listarIngresos_(usuario, datos) {
     });
 }
 
-/** Cada usuario registra solo su propio ingreso. Si el mes ya existe, se reemplaza. */
+/**
+ * Cada usuario registra su propio ingreso; el administrador puede registrar
+ * el de cualquier usuario activo. Si el mes ya existe, se reemplaza.
+ */
 function guardarIngreso_(usuario, datos) {
+  let usuarioId = usuario.id;
+  if (datos.usuario_id && datos.usuario_id !== usuario.id) {
+    exigirAdmin_(usuario);
+    if (!usuariosActivos_().some(function (u) { return u.id === datos.usuario_id; })) {
+      throw errorPublico_('Ese usuario no existe o no está activo.');
+    }
+    usuarioId = String(datos.usuario_id);
+  }
   const anio = Number(datos.anio);
   const mes = Number(datos.mes);
   const monto = leerMonto_(datos.monto);
@@ -124,14 +135,14 @@ function guardarIngreso_(usuario, datos) {
   }
   return conCandado_(function () {
     const existente = leerTabla_('Ingresos').filter(function (i) {
-      return i.usuario_id === usuario.id && Number(i.anio) === anio && Number(i.mes) === mes;
+      return i.usuario_id === usuarioId && Number(i.anio) === anio && Number(i.mes) === mes;
     })[0];
     if (existente) {
       existente.monto = monto;
       actualizarFila_('Ingresos', existente);
     } else {
       agregarFilas_('Ingresos', [{
-        id: 'i-' + Utilities.getUuid(), usuario_id: usuario.id, anio: anio, mes: mes,
+        id: 'i-' + Utilities.getUuid(), usuario_id: usuarioId, anio: anio, mes: mes,
         monto: monto, creado_en: new Date()
       }]);
     }

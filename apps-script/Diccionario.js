@@ -20,20 +20,37 @@ function sugerir_(usuario, datos) {
     }
     texto = glosaDe_(movimiento);
   }
-  const glosa = normalizarGlosa_(textoSeguro_(texto, 200));
-  if (!glosa) {
-    return { exacta: false, opciones: [] };
-  }
+  return sugerirDesde_(diccionarioVigente_(), texto);
+}
 
+/** Sugerencias para varias descripciones a la vez (por ejemplo, una cartola). */
+function sugerirVarios_(usuario, datos) {
+  const descripciones = Array.isArray(datos.descripciones) ? datos.descripciones : [];
+  if (!descripciones.length || descripciones.length > MAXIMO_REVISION) {
+    throw errorPublico_('Envía entre 1 y ' + MAXIMO_REVISION + ' descripciones.');
+  }
+  const filas = diccionarioVigente_();
+  return descripciones.map(function (texto) { return sugerirDesde_(filas, texto); });
+}
+
+/** Filas del diccionario cuya categoría sigue activa y es del mismo tipo. */
+function diccionarioVigente_() {
   const vigentes = {};
   leerTabla_('Categorias').forEach(function (c) {
     if (esSi_(c.activa)) {
       vigentes[c.id] = c.tipo;
     }
   });
-  const filas = leerTabla_('Diccionario').filter(function (d) {
+  return leerTabla_('Diccionario').filter(function (d) {
     return vigentes[d.categoria_id] === d.tipo;
   });
+}
+
+function sugerirDesde_(filas, texto) {
+  const glosa = normalizarGlosa_(textoSeguro_(texto, 200));
+  if (!glosa) {
+    return { exacta: false, opciones: [] };
+  }
 
   let coincidencias = filas.filter(function (d) { return String(d.glosa_normalizada) === glosa; });
   const exacta = coincidencias.length > 0;

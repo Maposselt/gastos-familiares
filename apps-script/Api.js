@@ -27,6 +27,7 @@ function acciones_() {
       };
     },
     sugerir: sugerir_,
+    sugerirVarios: sugerirVarios_,
     listarMovimientos: listarMovimientos_,
     revisarDuplicados: revisarDuplicados_,
     guardarMovimiento: guardarMovimiento_,

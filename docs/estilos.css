@@ -186,9 +186,16 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 .tabla th, .tabla td { padding: 8px 10px; border-bottom: 1px solid var(--borde); text-align: right; white-space: nowrap; }
 .tabla th:first-child, .tabla td:first-child { text-align: left; }
 
-.grupo-categoria { margin-bottom: 12px; }
-.fila-categoria { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--borde); }
-.fila-categoria.inactiva { opacity: .55; }
+.tabla-categorias th, .tabla-categorias td { text-align: left; }
+.tabla-categorias td:last-child { text-align: right; width: 1%; }
+.tabla-categorias tr.inicio-grupo td { border-top: 2px solid var(--borde); }
+.tabla-categorias tr.inactiva td { opacity: .55; }
+.celda-categoria { font-weight: 700; }
+.criterio { display: inline-block; padding: 2px 10px; border-radius: 99px; font-size: .8rem; font-weight: 600; }
+.criterio-Proporcional { background: var(--familiar); }
+.criterio-5050 { background: var(--personal); }
+.criterio-100 { background: var(--alerta-amarilla); }
+.tabla td button.enlace { text-decoration: none; margin-left: 4px; }
 
 .navegacion {
   position: fixed;

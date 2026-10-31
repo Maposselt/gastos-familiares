@@ -56,11 +56,12 @@
     <section id="pantalla-ingresos" class="pantalla" hidden>
       <h2>Ingresos</h2>
       <div class="tarjeta">
-        <h3>Registrar mi ingreso</h3>
+        <h3 id="titulo-ingreso">Registrar mi ingreso</h3>
+        <label id="fila-ingreso-usuario" hidden>¿De quién es el ingreso? <select id="ingreso-usuario"></select></label>
         <label>Mes <input type="month" id="ingreso-mes"></label>
         <label>Monto <input type="text" id="ingreso-monto" inputmode="numeric" autocomplete="off" placeholder="0"></label>
         <button type="button" id="boton-ingreso" class="principal">Guardar ingreso</button>
-        <p class="nota">Si ese mes ya tenía un ingreso tuyo, se reemplaza.</p>
+        <p class="nota">Si ese mes ya tenía un ingreso, se reemplaza. Toca ✏️ en la tabla para corregir un mes.</p>
       </div>
       <div class="tabla-contenedor">
         <table id="tabla-ingresos" class="tabla"></table>

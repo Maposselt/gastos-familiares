@@ -199,6 +199,7 @@ async function alEntrar(respuesta) {
     $('sesion').hidden = false;
     $('navegacion').hidden = false;
     $('nav-config').hidden = !estado.usuario.esAdmin;
+    prepararIngresos();
     $('mensaje-entrar').textContent = '';
     if (estado.pantalla === 'config' && !estado.usuario.esAdmin) {
       estado.pantalla = 'nuevo';
@@ -673,6 +674,28 @@ function terminarEdicion(mensaje) {
 // Pantalla: ingresos
 // ---------------------------------------------------------------------------
 
+/** El administrador puede registrar o corregir el ingreso de cualquiera; el resto, solo el suyo. */
+function prepararIngresos() {
+  const esAdmin = estado.usuario.esAdmin;
+  $('fila-ingreso-usuario').hidden = !esAdmin;
+  $('titulo-ingreso').textContent = esAdmin ? 'Registrar o corregir un ingreso' : 'Registrar mi ingreso';
+  vaciar($('ingreso-usuario'), estado.usuarios.map((u) => el('option', { value: u.id, text: u.nombre })));
+  $('ingreso-usuario').value = estado.usuario.id;
+}
+
+function puedeEditarIngreso(usuarioId) {
+  return estado.usuario.esAdmin || usuarioId === estado.usuario.id;
+}
+
+/** Carga en el formulario un mes de la tabla para corregirlo. */
+function editarIngreso(mes, usuarioId, monto) {
+  $('ingreso-mes').value = mes;
+  $('ingreso-usuario').value = usuarioId;
+  $('ingreso-monto').value = monto ? monto.toLocaleString('es-CL') : '';
+  $('titulo-ingreso').scrollIntoView({ behavior: 'smooth' });
+  $('ingreso-monto').focus();
+}
+
 async function pintarIngresos() {
   if (!$('ingreso-mes').value) {
     $('ingreso-mes').value = mesActual();
@@ -709,7 +732,15 @@ async function pintarIngresos() {
       const completo = estado.usuarios.every((u) => fila[u.id] > 0);
       return el('tr', {},
         el('td', { text: nombreMes(mes) }),
-        estado.usuarios.map((u) => el('td', { text: fila[u.id] ? pesos(fila[u.id]) : '—' })),
+        estado.usuarios.map((u) => el('td', {},
+          fila[u.id] ? pesos(fila[u.id]) : '—',
+          puedeEditarIngreso(u.id)
+            ? el('button', {
+              type: 'button', class: 'enlace', text: '✏️',
+              'aria-label': 'Corregir ingreso de ' + u.nombre + ' en ' + nombreMes(mes),
+              onclick: () => editarIngreso(mes, u.id, fila[u.id])
+            })
+            : null)),
         el('td', { text: completo && primero ? (100 * fila[primero.id] / total).toFixed(1).replace('.', ',') + '%' : '—' }));
     })));
 }
@@ -724,7 +755,9 @@ function guardarIngreso() {
   }
   intentar(boton, async () => {
     const [anio, numeroMes] = mes.split('-').map(Number);
-    await llamar('guardarIngreso', { anio: anio, mes: numeroMes, monto: monto });
+    await llamar('guardarIngreso', {
+      anio: anio, mes: numeroMes, monto: monto, usuario_id: $('ingreso-usuario').value || estado.usuario.id
+    });
     $('ingreso-monto').value = '';
     estado.ingresos = null;
     avisar('Ingreso guardado.');
@@ -736,10 +769,11 @@ function guardarIngreso() {
 // Pantalla: configuración de categorías (solo administrador)
 // ---------------------------------------------------------------------------
 
+/** Una tabla por tipo; el nombre de la categoría se muestra una vez por grupo. */
 function pintarConfig() {
   const verDesactivadas = $('filtro-desactivadas').checked;
-  const contenedor = $('lista-categorias');
-  vaciar(contenedor, ['Familiar', 'Personal'].map((tipo) => {
+  vaciar($('lista-categorias'), ['Familiar', 'Personal'].map((tipo) => {
+    const familiar = tipo === 'Familiar';
     const grupos = new Map();
     estado.categorias
       .filter((c) => c.tipo === tipo && (verDesactivadas || c.activa))
@@ -749,18 +783,39 @@ function pintarConfig() {
         }
         grupos.get(c.categoria).push(c);
       });
+
+    const filas = [];
+    grupos.forEach((lista, nombre) => {
+      lista.forEach((c, i) => {
+        filas.push(el('tr', { class: (i === 0 ? 'inicio-grupo' : '') + (c.activa ? '' : ' inactiva') },
+          el('td', { class: 'celda-categoria', text: i === 0 ? nombre : '' }),
+          el('td', { text: c.subcategoria }),
+          familiar
+            ? el('td', {}, el('span', {
+              class: 'criterio criterio-' + c.criterio.replace(/\W/g, ''),
+              text: c.criterio + (c.criterio === '100%' ? ' ' + nombreUsuario(c.usuario_100) : '')
+            }))
+            : null,
+          el('td', { text: c.activa ? '🟢 Activa' : '⚪ Desactivada' }),
+          el('td', {}, el('button', {
+            type: 'button', class: 'enlace', text: '✏️',
+            'aria-label': 'Editar ' + nombre + ' / ' + c.subcategoria,
+            onclick: () => abrirCategoria(c)
+          }))));
+      });
+    });
+
     return el('div', { class: 'tarjeta' },
-      el('h3', { text: tipo === 'Familiar' ? '👨‍👩‍👧 Familiares' : '🙋 Personales' }),
-      Array.from(grupos.entries()).map(([nombre, lista]) => el('div', { class: 'grupo-categoria' },
-        el('strong', { text: nombre }),
-        lista.map((c) => el('div', { class: 'fila-categoria' + (c.activa ? '' : ' inactiva') },
-          el('div', {},
-            el('div', { text: c.subcategoria }),
-            el('div', { class: 'nota', text: [
-              tipo === 'Familiar' ? c.criterio + (c.criterio === '100%' ? ' ' + nombreUsuario(c.usuario_100) : '') : '',
-              c.activa ? '' : 'Desactivada'
-            ].filter(Boolean).join(' · ') })),
-          el('button', { type: 'button', text: 'Editar', onclick: () => abrirCategoria(c) }))))));
+      el('h3', { text: familiar ? '👨‍👩‍👧 Familiares' : '🙋 Personales' }),
+      el('div', { class: 'tabla-contenedor' },
+        el('table', { class: 'tabla tabla-categorias' },
+          el('thead', {}, el('tr', {},
+            el('th', { text: 'Categoría' }),
+            el('th', { text: 'Subcategoría' }),
+            familiar ? el('th', { text: 'Criterio' }) : null,
+            el('th', { text: 'Estado' }),
+            el('th', { 'aria-label': 'Editar' }))),
+          el('tbody', {}, filas))));
   }));
 }
 

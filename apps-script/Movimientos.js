@@ -123,22 +123,7 @@ function guardarMovimiento_(usuario, datos) {
       return { guardado: false, duplicados: alertas };
     }
 
-    const movimiento = {
-      id: 'm-' + Utilities.getUuid(),
-      fecha: v.fecha,
-      monto: v.monto,
-      descripcion: v.descripcion,
-      usuario_id: usuario.id,
-      tipo: porRevisar ? '' : v.tipo,
-      categoria_id: porRevisar ? '' : v.categoria.id,
-      rendir_trabajo: !porRevisar && v.rendir ? 'Sí' : 'No',
-      estado: porRevisar ? 'Por revisar' : 'Confirmado',
-      origen: v.origen,
-      huella: huella_(v.fecha, v.monto, v.glosa),
-      duplicado_revisado: alertas.length ? 'Sí' : '',
-      creado_en: new Date(),
-      modificado_en: ''
-    };
+    const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0);
     agregarFilas_('Movimientos', [movimiento]);
     if (porRevisar) {
       return { guardado: true, id: movimiento.id, pendientes: [] };
@@ -148,6 +133,93 @@ function guardarMovimiento_(usuario, datos) {
     }
     aprenderGlosa_(v.glosa, v.tipo, v.categoria.id);
     return { guardado: true, id: movimiento.id, pendientes: pendientesConGlosa_(usuario, v.glosa, movimiento.id) };
+  });
+}
+
+/** Fila nueva de Movimientos a partir de los datos ya validados. */
+function nuevoMovimiento_(usuario, v, porRevisar, conDuplicado) {
+  return {
+    id: 'm-' + Utilities.getUuid(),
+    fecha: v.fecha,
+    monto: v.monto,
+    descripcion: v.descripcion,
+    usuario_id: usuario.id,
+    tipo: porRevisar ? '' : v.tipo,
+    categoria_id: porRevisar ? '' : v.categoria.id,
+    rendir_trabajo: !porRevisar && v.rendir ? 'Sí' : 'No',
+    estado: porRevisar ? 'Por revisar' : 'Confirmado',
+    origen: v.origen,
+    huella: huella_(v.fecha, v.monto, v.glosa),
+    duplicado_revisado: conDuplicado ? 'Sí' : '',
+    creado_en: new Date(),
+    modificado_en: ''
+  };
+}
+
+/**
+ * Guarda de una vez las decisiones de una importación. Cada gasto trae su
+ * propia decisión, tomada fila por fila: confirmado (con su tipo y categoría)
+ * o porRevisar. Lee la planilla una sola vez y escribe todo junto, para que
+ * sea rápido. Devuelve el resultado de cada gasto, en el mismo orden.
+ */
+function guardarVarios_(usuario, datos) {
+  const decisiones = Array.isArray(datos.decisiones) ? datos.decisiones : [];
+  if (!decisiones.length || decisiones.length > MAXIMO_REVISION) {
+    throw errorPublico_('Envía entre 1 y ' + MAXIMO_REVISION + ' gastos.');
+  }
+  return conCandado_(function () {
+    const categoriasPorId = {};
+    leerTabla_('Categorias').forEach(function (c) { categoriasPorId[c.id] = c; });
+    const contexto = { usuarios: usuariosActivos_(), ingresos: leerTabla_('Ingresos') };
+    const existentes = huellasExistentes_();
+    const diccionario = leerTabla_('Diccionario');
+    const movimientos = [];
+    const repartos = [];
+    const glosasConfirmadas = {};
+
+    const resultados = decisiones.map(function (d) {
+      try {
+        const porRevisar = d.porRevisar === true;
+        const v = porRevisar ? validarDatosBasicos_(d) : validarMovimiento_(d, categoriasPorId);
+        const candidato = { fecha: v.fecha, monto: v.monto, glosa: normalizar_(v.glosa) };
+        const alertas = buscarDuplicados_(usuario, candidato, existentes);
+        if (alertas.length && d.confirmarDuplicado !== true) {
+          return { guardado: false, duplicados: alertas };
+        }
+        const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0);
+        movimientos.push(movimiento);
+        // Así también se detectan duplicados entre los gastos de esta misma carga.
+        existentes.push({ movimiento: movimiento, fecha: v.fecha, monto: v.monto, glosa: candidato.glosa });
+        if (!porRevisar) {
+          if (v.tipo === 'Familiar') {
+            Array.prototype.push.apply(repartos, calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto, contexto));
+          }
+          sumarAlDiccionario_(diccionario, v.glosa, v.tipo, v.categoria.id);
+          glosasConfirmadas[normalizarGlosa_(v.glosa)] = true;
+        }
+        return { guardado: true, id: movimiento.id };
+      } catch (error) {
+        if (!error.publico) {
+          throw error;
+        }
+        return { guardado: false, error: error.message };
+      }
+    });
+
+    agregarFilas_('Movimientos', movimientos);
+    agregarFilas_('Repartos', repartos);
+    escribirDiccionario_(diccionario);
+
+    const nuevos = {};
+    movimientos.forEach(function (m) { nuevos[m.id] = true; });
+    const pendientes = existentes
+      .map(function (h) { return h.movimiento; })
+      .filter(function (m) {
+        return m.estado === 'Por revisar' && m.usuario_id === usuario.id && !nuevos[m.id] &&
+          glosasConfirmadas[normalizarGlosa_(glosaDe_(m))];
+      })
+      .map(function (m) { return publicarMovimiento_(m); });
+    return { resultados: resultados, pendientes: pendientes };
   });
 }
 
@@ -252,13 +324,18 @@ function validarDatosBasicos_(datos) {
   };
 }
 
-/** Valida un gasto completo (con tipo y categoría) y devuelve los valores limpios. */
-function validarMovimiento_(datos) {
+/**
+ * Valida un gasto completo (con tipo y categoría) y devuelve los valores
+ * limpios. categoriasPorId es opcional: sirve para no releer la pestaña.
+ */
+function validarMovimiento_(datos, categoriasPorId) {
   const v = validarDatosBasicos_(datos);
   if (TIPOS.indexOf(datos.tipo) < 0) {
     throw errorPublico_('Debes confirmar si el gasto es Familiar o Personal.');
   }
-  const categoria = leerTabla_('Categorias').filter(function (c) { return c.id === datos.categoria_id; })[0];
+  const categoria = categoriasPorId
+    ? categoriasPorId[datos.categoria_id]
+    : leerTabla_('Categorias').filter(function (c) { return c.id === datos.categoria_id; })[0];
   if (!categoria || !esSi_(categoria.activa) || categoria.tipo !== datos.tipo) {
     throw errorPublico_('Elige una categoría vigente del tipo ' + datos.tipo + '.');
   }
@@ -335,8 +412,8 @@ function buscarDuplicados_(usuario, candidato, existentes) {
  * Calcula cuánto le toca a cada usuario según el criterio de la categoría:
  * Proporcional (a los ingresos del mes), 50/50 o 100% a un usuario.
  */
-function calcularReparto_(movimientoId, categoria, fecha, monto) {
-  const usuarios = usuariosActivos_();
+function calcularReparto_(movimientoId, categoria, fecha, monto, contexto) {
+  const usuarios = contexto ? contexto.usuarios : usuariosActivos_();
   const criterio = normalizar_(categoria.criterio);
   let proporciones = null;
 
@@ -346,7 +423,7 @@ function calcularReparto_(movimientoId, categoria, fecha, monto) {
     }
     proporciones = usuarios.map(function (u) { return u.id === categoria.usuario_100 ? 1 : 0; });
   } else if (criterio === 'proporcional') {
-    proporciones = proporcionesPorIngreso_(usuarios, fecha);
+    proporciones = proporcionesPorIngreso_(usuarios, fecha, contexto ? contexto.ingresos : leerTabla_('Ingresos'));
   }
   if (!proporciones) {
     proporciones = usuarios.map(function () { return 1 / usuarios.length; });
@@ -365,9 +442,9 @@ function calcularReparto_(movimientoId, categoria, fecha, monto) {
  * aún no tiene los ingresos de todos, usa el último mes anterior que sí los tenga.
  * Devuelve null si no hay ningún mes completo.
  */
-function proporcionesPorIngreso_(usuarios, fecha) {
+function proporcionesPorIngreso_(usuarios, fecha, filasIngresos) {
   const porMes = {};
-  leerTabla_('Ingresos').forEach(function (i) {
+  filasIngresos.forEach(function (i) {
     const clave = Number(i.anio) * 12 + Number(i.mes) - 1;
     porMes[clave] = porMes[clave] || {};
     porMes[clave][i.usuario_id] = (porMes[clave][i.usuario_id] || 0) + Number(i.monto);

@@ -20,7 +20,7 @@ function sugerir_(usuario, datos) {
     }
     texto = glosaDe_(movimiento);
   }
-  return sugerirDesde_(diccionarioVigente_(), texto);
+  return sugerirDesde_(diccionarioVigente_(), texto, detallesPorGlosa_(usuario));
 }
 
 /** Sugerencias para varias descripciones a la vez (por ejemplo, una cartola). */
@@ -30,7 +30,47 @@ function sugerirVarios_(usuario, datos) {
     throw errorPublico_('Envía entre 1 y ' + MAXIMO_REVISION + ' descripciones.');
   }
   const filas = diccionarioVigente_();
-  return descripciones.map(function (texto) { return sugerirDesde_(filas, texto); });
+  const detalles = detallesPorGlosa_(usuario);
+  return descripciones.map(function (texto) { return sugerirDesde_(filas, texto, detalles); });
+}
+
+/**
+ * Detalles que se agregaron antes a cada glosa ("glosa — detalle"), solo de
+ * los gastos que este usuario puede ver. Las variantes que solo cambian en
+ * tildes o mayúsculas cuentan como el mismo detalle.
+ * Devuelve { glosa: { detalleNormalizado: { texto, veces } } }.
+ */
+function detallesPorGlosa_(usuario) {
+  const resultado = {};
+  leerTabla_('Movimientos').forEach(function (m) {
+    const partes = String(m.descripcion).split(SEPARADOR_DETALLE);
+    const detalle = partes.slice(1).join(SEPARADOR_DETALLE).trim();
+    const clave = normalizar_(detalle);
+    if (!clave || m.estado === 'Anulado' || !puedeVer_(usuario, m)) {
+      return;
+    }
+    const glosa = normalizarGlosa_(glosaDe_(m));
+    resultado[glosa] = resultado[glosa] || {};
+    resultado[glosa][clave] = resultado[glosa][clave] || { texto: detalle, veces: 0 };
+    resultado[glosa][clave].veces++;
+  });
+  return resultado;
+}
+
+/** Los 3 detalles más usados entre las glosas encontradas. */
+function detallesFrecuentes_(detalles, glosas) {
+  const conteo = {};
+  glosas.forEach(function (g) {
+    Object.keys(detalles[g] || {}).forEach(function (clave) {
+      const d = detalles[g][clave];
+      conteo[clave] = conteo[clave] || { texto: d.texto, veces: 0 };
+      conteo[clave].veces += d.veces;
+    });
+  });
+  return Object.keys(conteo)
+    .sort(function (a, b) { return conteo[b].veces - conteo[a].veces; })
+    .slice(0, 3)
+    .map(function (clave) { return conteo[clave].texto; });
 }
 
 /** Filas del diccionario cuya categoría sigue activa y es del mismo tipo. */
@@ -46,10 +86,10 @@ function diccionarioVigente_() {
   });
 }
 
-function sugerirDesde_(filas, texto) {
+function sugerirDesde_(filas, texto, detalles) {
   const glosa = normalizarGlosa_(textoSeguro_(texto, 200));
   if (!glosa) {
-    return { exacta: false, opciones: [] };
+    return { exacta: false, opciones: [], detalles: [] };
   }
 
   let coincidencias = filas.filter(function (d) { return String(d.glosa_normalizada) === glosa; });
@@ -78,7 +118,13 @@ function sugerirDesde_(filas, texto) {
     };
   }).sort(function (a, b) { return b.veces - a.veces; });
 
-  return { exacta: exacta, total: total, opciones: opciones };
+  const glosasEncontradas = [glosa].concat(coincidencias.map(function (d) { return String(d.glosa_normalizada); }));
+  return {
+    exacta: exacta,
+    total: total,
+    opciones: opciones,
+    detalles: detalles ? detallesFrecuentes_(detalles, glosasEncontradas.filter(function (g, i, lista) { return lista.indexOf(g) === i; })) : []
+  };
 }
 
 /**
@@ -86,34 +132,53 @@ function sugerirDesde_(filas, texto) {
  * para esa glosa. Debe llamarse con el candado tomado.
  */
 function aprenderGlosa_(texto, tipo, categoriaId) {
+  const filas = leerTabla_('Diccionario');
+  sumarAlDiccionario_(filas, texto, tipo, categoriaId);
+  escribirDiccionario_(filas);
+}
+
+/**
+ * Suma una vez la glosa con su categoría en la lista del diccionario (en
+ * memoria) y marca las filas que cambiaron. No escribe en la planilla.
+ */
+function sumarAlDiccionario_(filas, texto, tipo, categoriaId) {
   const glosa = normalizarGlosa_(texto);
   if (!glosa) {
     return;
   }
-  const filas = leerTabla_('Diccionario').filter(function (d) {
-    return String(d.glosa_normalizada) === glosa;
-  });
-  let fila = filas.filter(function (d) { return d.tipo === tipo && d.categoria_id === categoriaId; })[0];
-  const nueva = !fila;
-  if (nueva) {
+  const deLaGlosa = filas.filter(function (d) { return String(d.glosa_normalizada) === glosa; });
+  let fila = deLaGlosa.filter(function (d) { return d.tipo === tipo && d.categoria_id === categoriaId; })[0];
+  if (!fila) {
     fila = { glosa_normalizada: glosa, tipo: tipo, categoria_id: categoriaId, veces: 0 };
     filas.push(fila);
+    deLaGlosa.push(fila);
   }
   fila.veces = Number(fila.veces) + 1;
 
-  const total = filas.reduce(function (suma, d) { return suma + Number(d.veces); }, 0);
+  const total = deLaGlosa.reduce(function (suma, d) { return suma + Number(d.veces); }, 0);
   const ahora = new Date();
-  filas.forEach(function (d) {
+  deLaGlosa.forEach(function (d) {
     d.total_registros = total;
     d.porcentaje = Number(d.veces) / total;
     d.actualizado_en = ahora;
-    if (d !== fila || !nueva) {
+    d._cambio = true;
+  });
+}
+
+/** Escribe las filas del diccionario que cambiaron: actualiza las existentes y agrega las nuevas. */
+function escribirDiccionario_(filas) {
+  const nuevas = [];
+  filas.forEach(function (d) {
+    if (!d._cambio) {
+      return;
+    }
+    if (d._fila) {
       actualizarFila_('Diccionario', d);
+    } else {
+      nuevas.push(d);
     }
   });
-  if (nueva) {
-    agregarFilas_('Diccionario', [fila]);
-  }
+  agregarFilas_('Diccionario', nuevas);
 }
 
 /** Glosa original de un gasto: la guardada en su huella, o su descripción. */

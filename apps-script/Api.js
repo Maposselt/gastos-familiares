@@ -31,6 +31,7 @@ function acciones_() {
     listarMovimientos: listarMovimientos_,
     revisarDuplicados: revisarDuplicados_,
     guardarMovimiento: guardarMovimiento_,
+    guardarVarios: guardarVarios_,
     actualizarMovimiento: actualizarMovimiento_,
     listarCategorias: listarCategorias_,
     guardarCategoria: guardarCategoria_,

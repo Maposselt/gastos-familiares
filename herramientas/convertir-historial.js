@@ -554,7 +554,7 @@ function principal_() {
     const monto = Math.round(f[COL_FAMILIAR.monto]);
     const mov = agregarMovimiento(
       new Date(Date.UTC(anio, mes, 0)), monto,
-      'Histórico: ' + cuenta + ' ' + f[COL_FAMILIAR.mes] + ' ' + anio, cuenta,
+      cuenta + ' ' + f[COL_FAMILIAR.mes] + ' ' + anio, cuenta,
       usuarioDe_(config, f[COL_FAMILIAR.pagadoPor], 'familiar, fila ' + f.fila),
       'Familiar', categoriaId, false, categoriaId ? 'Confirmado' : 'Por revisar');
 

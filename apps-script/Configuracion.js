@@ -127,6 +127,48 @@ function renumerarOrdenCategorias() {
 }
 
 /**
+ * Quita el prefijo "Histórico: " de las descripciones de los totales mensuales
+ * importados del Excel. Se ejecuta a mano una vez desde el editor. Solo toca
+ * las celdas que empiezan con ese prefijo; es seguro ejecutarla de nuevo.
+ */
+function quitarPrefijoHistorico() {
+  const prefijo = 'Histórico: ';
+  const hoja = hoja_('Movimientos');
+  const columna = encabezados_(hoja, 'Movimientos').indexOf('descripcion') + 1;
+  const cantidad = hoja.getLastRow() - 1;
+  if (cantidad < 1) {
+    return;
+  }
+  const valores = hoja.getRange(2, columna, cantidad, 1).getValues();
+
+  // Se escriben solo los tramos de filas seguidas que cambian, nunca la columna completa.
+  let cambios = 0;
+  let inicio = -1;
+  let tramo = [];
+  function escribirTramo() {
+    if (tramo.length) {
+      hoja.getRange(inicio + 2, columna, tramo.length, 1).setValues(tramo);
+    }
+    tramo = [];
+    inicio = -1;
+  }
+  valores.forEach(function (fila, i) {
+    const texto = String(fila[0]);
+    if (texto.indexOf(prefijo) === 0) {
+      if (inicio < 0) {
+        inicio = i;
+      }
+      tramo.push([texto.slice(prefijo.length)]);
+      cambios++;
+    } else {
+      escribirTramo();
+    }
+  });
+  escribirTramo();
+  Logger.log('Descripciones corregidas: ' + cambios);
+}
+
+/**
  * Borra las hojas vacías que Google crea por defecto ("Hoja 1" o "Sheet1"),
  * pero solo si no son parte de la estructura y no tienen ningún dato.
  */

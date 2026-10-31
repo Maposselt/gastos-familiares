@@ -447,7 +447,10 @@ function formularioGasto(opciones) {
   });
   elegirTipo(tipo, inicial.categoria_id);
   categoriaManual = !!inicial.categoria_id;
-  if (opciones.idMovimiento) {
+  if (opciones.sugerenciaInicial && opciones.sugerenciaInicial.opciones.length) {
+    sugerencia = opciones.sugerenciaInicial;
+    aplicarSugerencia();
+  } else if (opciones.idMovimiento) {
     buscarSugerencia({ id: opciones.idMovimiento });
   }
 
@@ -535,6 +538,400 @@ function mostrarDuplicados(alertas, acciones) {
       el('button', { type: 'button', class: 'peligro', text: 'Descartar', onclick: () => { dialogo.close(); acciones.descartar(); avisar('Gasto descartado.'); } }),
       el('button', { type: 'button', text: 'Volver a editar', onclick: () => dialogo.close() })));
   dialogo.showModal();
+}
+
+// ---------------------------------------------------------------------------
+// Importar cartola (Excel o CSV). El archivo se lee aquí, en el navegador:
+// nunca se sube completo. Solo viajan los gastos que el usuario guarda.
+// ---------------------------------------------------------------------------
+
+const MAXIMO_FILAS_IMPORTACION = 200;
+const PATRONES_COLUMNA = {
+  fecha: /fecha/i,
+  descripcion: /descrip|glosa|detalle|comercio|concepto/i,
+  monto: /monto|valor|cargo|importe|total/i
+};
+
+/** Lee un .xlsx (que es un zip con XML adentro) usando solo funciones del navegador. */
+async function abrirZip(buffer) {
+  const vista = new DataView(buffer);
+  let fin = -1;
+  for (let i = buffer.byteLength - 22; i >= Math.max(0, buffer.byteLength - 65557); i--) {
+    if (vista.getUint32(i, true) === 0x06054b50) {
+      fin = i;
+      break;
+    }
+  }
+  if (fin < 0) {
+    throw new Error('El archivo no parece un Excel (.xlsx) válido.');
+  }
+  const decodificador = new TextDecoder();
+  const entradas = {};
+  let p = vista.getUint32(fin + 16, true);
+  for (let n = vista.getUint16(fin + 10, true); n > 0; n--) {
+    const largoNombre = vista.getUint16(p + 28, true);
+    entradas[decodificador.decode(new Uint8Array(buffer, p + 46, largoNombre))] = {
+      metodo: vista.getUint16(p + 10, true),
+      tamano: vista.getUint32(p + 20, true),
+      inicio: vista.getUint32(p + 42, true)
+    };
+    p += 46 + largoNombre + vista.getUint16(p + 30, true) + vista.getUint16(p + 32, true);
+  }
+  return async function leer(nombre) {
+    const e = entradas[nombre];
+    if (!e) {
+      return null;
+    }
+    const desde = e.inicio + 30 + vista.getUint16(e.inicio + 26, true) + vista.getUint16(e.inicio + 28, true);
+    const bytes = new Uint8Array(buffer, desde, e.tamano);
+    if (e.metodo === 0) {
+      return decodificador.decode(bytes);
+    }
+    if (e.metodo !== 8) {
+      throw new Error('Este Excel usa un formato de compresión no soportado.');
+    }
+    const flujo = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Response(flujo).text();
+  };
+}
+
+function leerXml(texto) {
+  return new DOMParser().parseFromString(texto, 'application/xml');
+}
+
+function indiceColumna(letras) {
+  return letras.split('').reduce((n, letra) => n * 26 + letra.charCodeAt(0) - 64, 0) - 1;
+}
+
+function letraColumna(indice) {
+  let letras = '';
+  for (let n = indice + 1; n > 0; n = Math.floor((n - 1) / 26)) {
+    letras = String.fromCharCode(65 + ((n - 1) % 26)) + letras;
+  }
+  return letras;
+}
+
+/** Devuelve la primera hoja del Excel como lista de filas (arreglos de valores). */
+async function leerExcel(buffer) {
+  const leer = await abrirZip(buffer);
+  const textos = [];
+  const compartidos = await leer('xl/sharedStrings.xml');
+  if (compartidos) {
+    Array.from(leerXml(compartidos).getElementsByTagName('si')).forEach((si) => {
+      textos.push(Array.from(si.getElementsByTagName('t'))
+        .filter((t) => t.parentNode.nodeName !== 'rPh')
+        .map((t) => t.textContent).join(''));
+    });
+  }
+  const libro = leerXml(await leer('xl/workbook.xml'));
+  const primeraHoja = libro.getElementsByTagName('sheet')[0];
+  const relaciones = leerXml(await leer('xl/_rels/workbook.xml.rels'));
+  const relacion = Array.from(relaciones.getElementsByTagName('Relationship'))
+    .find((r) => r.getAttribute('Id') === primeraHoja.getAttribute('r:id'));
+  const destino = relacion.getAttribute('Target').replace(/^\//, '');
+  const hoja = leerXml(await leer(destino.startsWith('xl/') ? destino : 'xl/' + destino));
+
+  return Array.from(hoja.getElementsByTagName('row')).map((fila) => {
+    const valores = [];
+    Array.from(fila.getElementsByTagName('c')).forEach((c) => {
+      const tipo = c.getAttribute('t');
+      const v = c.getElementsByTagName('v')[0];
+      let valor = '';
+      if (tipo === 'inlineStr') {
+        valor = Array.from(c.getElementsByTagName('t')).map((t) => t.textContent).join('');
+      } else if (v) {
+        valor = tipo === 's' ? textos[Number(v.textContent)] : tipo === 'str' || tipo === 'b' ? v.textContent : Number(v.textContent);
+      }
+      valores[indiceColumna(c.getAttribute('r').replace(/\d+/g, ''))] = valor;
+    });
+    return Array.from(valores, (x) => (x === undefined ? '' : x));
+  });
+}
+
+/** CSV con separador "," ";" o tabulación, en UTF-8 o la codificación de Excel en Windows. */
+function leerCsv(buffer) {
+  let texto;
+  try {
+    texto = new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch (e) {
+    texto = new TextDecoder('windows-1252').decode(buffer);
+  }
+  texto = texto.replace(/^﻿/, '');
+  const primera = texto.split(/\r?\n/)[0];
+  const separador = [';', '\t', ','].reduce((mejor, s) =>
+    primera.split(s).length > primera.split(mejor).length ? s : mejor, ',');
+  const filas = [];
+  let fila = [];
+  let campo = '';
+  let comillas = false;
+  for (let i = 0; i < texto.length; i++) {
+    const ch = texto[i];
+    if (comillas) {
+      if (ch === '"' && texto[i + 1] === '"') {
+        campo += '"';
+        i++;
+      } else if (ch === '"') {
+        comillas = false;
+      } else {
+        campo += ch;
+      }
+    } else if (ch === '"') {
+      comillas = true;
+    } else if (ch === separador) {
+      fila.push(campo);
+      campo = '';
+    } else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && texto[i + 1] === '\n') {
+        i++;
+      }
+      fila.push(campo);
+      filas.push(fila);
+      fila = [];
+      campo = '';
+    } else {
+      campo += ch;
+    }
+  }
+  if (campo || fila.length) {
+    fila.push(campo);
+    filas.push(fila);
+  }
+  return filas;
+}
+
+/** Fecha de una celda: número de serie de Excel, DD/MM/YYYY o YYYY-MM-DD. Devuelve ISO o ''. */
+function fechaDeCelda(valor) {
+  let a;
+  let m;
+  let d;
+  if (typeof valor === 'number') {
+    if (valor < 32874 || valor > 73051) {
+      return '';
+    }
+    const utc = new Date(Math.round((valor - 25569) * 86400000));
+    [a, m, d] = [utc.getUTCFullYear(), utc.getUTCMonth() + 1, utc.getUTCDate()];
+  } else {
+    const texto = String(valor || '').trim();
+    let r = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(texto);
+    if (r) {
+      [a, m, d] = [Number(r[1]), Number(r[2]), Number(r[3])];
+    } else if ((r = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/.exec(texto))) {
+      [a, m, d] = [r[3].length === 2 ? 2000 + Number(r[3]) : Number(r[3]), Number(r[2]), Number(r[1])];
+    } else if (/^\d{5}(\.\d+)?$/.test(texto)) {
+      return fechaDeCelda(Number(texto));
+    } else {
+      return '';
+    }
+  }
+  const prueba = new Date(a, m - 1, d);
+  if (prueba.getFullYear() !== a || prueba.getMonth() !== m - 1 || prueba.getDate() !== d) {
+    return '';
+  }
+  return a + '-' + dosDigitos(m) + '-' + dosDigitos(d);
+}
+
+/** Monto de una celda: número o texto como "$ 12.345" o "-12.345". */
+function montoDeCelda(valor) {
+  if (typeof valor === 'number') {
+    return Math.round(valor);
+  }
+  const texto = String(valor || '').replace(/[$\s]/g, '').replace(/\./g, '').replace(',', '.');
+  return /^-?\d+(\.\d+)?$/.test(texto) ? Math.round(Number(texto)) : 0;
+}
+
+/** Busca, en las primeras filas, una fila de encabezados con fecha, descripción y monto. */
+function detectarColumnas(filas) {
+  for (let i = 0; i < Math.min(15, filas.length); i++) {
+    const columnas = {};
+    filas[i].forEach((valor, j) => {
+      const texto = typeof valor === 'string' ? valor.trim() : '';
+      Object.keys(PATRONES_COLUMNA).forEach((campo) => {
+        if (columnas[campo] === undefined && texto.length < 40 && PATRONES_COLUMNA[campo].test(texto)) {
+          columnas[campo] = j;
+        }
+      });
+    });
+    if (Object.keys(PATRONES_COLUMNA).every((campo) => columnas[campo] !== undefined)) {
+      return { encabezado: i, columnas: columnas };
+    }
+  }
+  return null;
+}
+
+async function importarArchivo(archivo) {
+  const contenedor = $('contenedor-importacion');
+  if (archivo.size > 5 * 1024 * 1024) {
+    avisar('El archivo es muy grande (máximo 5 MB).', true);
+    return;
+  }
+  vaciar(contenedor, el('p', { class: 'cargando', text: 'Leyendo ' + archivo.name + '…' }));
+  contenedor.hidden = false;
+  $('contenedor-nuevo').hidden = true;
+  try {
+    const buffer = await archivo.arrayBuffer();
+    const filas = /\.csv$/i.test(archivo.name) ? leerCsv(buffer) : await leerExcel(buffer);
+    const detectado = detectarColumnas(filas);
+    if (detectado) {
+      await prepararRevision(filas.slice(detectado.encabezado + 1), detectado.columnas, archivo.name);
+    } else {
+      elegirColumnas(filas, archivo.name);
+    }
+  } catch (error) {
+    avisar('No pude leer el archivo: ' + error.message, true);
+    cerrarImportacion();
+  }
+}
+
+/** Si no se reconocen los encabezados, el usuario indica qué columna es cada dato. */
+function elegirColumnas(filas, nombreArchivo) {
+  const ejemplo = filas.find((f) => f.filter((v) => v !== '').length >= 3) || filas[0] || [];
+  const cantidad = Math.max(...filas.slice(0, 15).map((f) => f.length), 0);
+  const selectores = {};
+  const campos = [];
+  Object.entries({ fecha: 'Fecha', descripcion: 'Descripción', monto: 'Monto' }).forEach(([campo, titulo]) => {
+    selectores[campo] = el('select', {},
+      Array.from({ length: cantidad }, (x, j) => el('option', {
+        value: String(j), text: 'Columna ' + letraColumna(j) + (ejemplo[j] !== undefined && ejemplo[j] !== '' ? ' (ej.: ' + String(ejemplo[j]).slice(0, 30) + ')' : '')
+      })));
+    campos.push(el('label', {}, titulo, selectores[campo]));
+  });
+  const conEncabezado = el('input', { type: 'checkbox', checked: true });
+  const boton = el('button', { type: 'button', class: 'principal', text: 'Continuar' });
+  boton.addEventListener('click', () => intentar(boton, () => {
+    const columnas = {};
+    Object.keys(selectores).forEach((campo) => { columnas[campo] = Number(selectores[campo].value); });
+    return prepararRevision(conEncabezado.checked ? filas.slice(1) : filas, columnas, nombreArchivo);
+  }));
+  vaciar($('contenedor-importacion'), el('div', { class: 'tarjeta' },
+    el('h3', { text: 'No reconocí las columnas de ' + nombreArchivo }),
+    el('p', { class: 'nota', text: 'Indica en qué columna está cada dato.' }),
+    campos,
+    el('label', { class: 'casilla' }, conEncabezado, 'La primera fila son títulos'),
+    el('div', { class: 'acciones' }, boton,
+      el('button', { type: 'button', text: 'Cancelar', onclick: cerrarImportacion }))));
+}
+
+/** Arma la lista de gastos, revisa duplicados y busca sugerencias para todos de una vez. */
+async function prepararRevision(filas, columnas, nombreArchivo) {
+  const items = [];
+  let omitidas = 0;
+  filas.forEach((f) => {
+    if (!f.some((v) => v !== '')) {
+      return;
+    }
+    const item = {
+      fecha: fechaDeCelda(f[columnas.fecha]),
+      monto: montoDeCelda(f[columnas.monto]),
+      descripcion: String(f[columnas.descripcion] || '').trim().slice(0, 200)
+    };
+    if (item.fecha && item.monto && item.descripcion) {
+      items.push(item);
+    } else {
+      omitidas++;
+    }
+  });
+  let recortadas = 0;
+  if (items.length > MAXIMO_FILAS_IMPORTACION) {
+    recortadas = items.length - MAXIMO_FILAS_IMPORTACION;
+    items.length = MAXIMO_FILAS_IMPORTACION;
+  }
+  if (!items.length) {
+    throw new Error('No encontré gastos con fecha, descripción y monto válidos.');
+  }
+
+  vaciar($('contenedor-importacion'), el('p', { class: 'cargando', text: 'Revisando ' + items.length + ' gastos…' }));
+  const [duplicados, sugerencias] = await Promise.all([
+    llamar('revisarDuplicados', { items: items }),
+    llamar('sugerirVarios', { descripciones: items.map((i) => i.descripcion) })
+  ]);
+  pintarRevision(items, duplicados, sugerencias, {
+    nombreArchivo: nombreArchivo, omitidas: omitidas, recortadas: recortadas
+  });
+}
+
+/**
+ * Una tarjeta por gasto. REGLA: cada uno se confirma por separado, con su
+ * propio tipo; no hay forma de asignar el tipo a varios a la vez.
+ */
+function pintarRevision(items, duplicados, sugerencias, info) {
+  let revisados = 0;
+  const contador = el('p', { class: 'contador' });
+  function actualizarContador() {
+    contador.textContent = 'Revisados ' + revisados + ' de ' + items.length;
+    if (revisados === items.length) {
+      contador.textContent += ' ✅ ¡Listo!';
+    }
+  }
+
+  const tarjetas = items.map((item, i) => {
+    const caja = el('li', { class: 'tarjeta-importacion' });
+    function terminar(texto) {
+      revisados++;
+      actualizarContador();
+      vaciar(caja, el('p', { class: 'nota', text: texto + ': ' + fechaVisible(item.fecha) + ' · ' + item.descripcion + ' · ' + pesos(item.monto) }));
+      estado.movimientos = null;
+    }
+    const alertas = (duplicados[i] && duplicados[i].alertas) || [];
+    const avisosDuplicado = alertas.map((a) => el('div', { class: 'alerta ' + a.nivel },
+      a.enEstaCarga !== undefined
+        ? (a.nivel === 'rojo' ? '🔴' : '🟡') + ' Se repite en el gasto ' + (a.enEstaCarga + 1) + ' de este archivo'
+        : (a.nivel === 'rojo' ? '🔴 Ya registrado: ' : '🟡 Parecido a: ') + fechaVisible(a.fecha) + ' · ' + a.descripcion + ' · ' + pesos(a.monto)));
+    const descartar = el('button', { type: 'button', class: 'peligro', text: 'Descartar', onclick: () => terminar('🗑️ Descartado') });
+
+    async function guardar(datos, confirmarDuplicado) {
+      const r = await llamar('guardarMovimiento', Object.assign({}, datos, {
+        origen: 'excel', confirmarDuplicado: confirmarDuplicado
+      }));
+      if (r.guardado) {
+        terminar('✅ Guardado');
+        return;
+      }
+      mostrarDuplicados(r.duplicados, {
+        guardarIgual: () => guardar(datos, true),
+        descartar: () => terminar('🗑️ Descartado')
+      });
+    }
+
+    vaciar(caja,
+      el('div', { class: 'numero-importacion', text: 'Gasto ' + (i + 1) + ' de ' + items.length }),
+      avisosDuplicado,
+      formularioGasto({
+        inicial: item,
+        sugerenciaInicial: sugerencias[i],
+        textoBoton: 'Guardar',
+        botonesExtra: [descartar],
+        alGuardar: (datos) => guardar(datos, false)
+      }));
+    return caja;
+  });
+
+  const avisos = [];
+  if (info.omitidas) {
+    avisos.push(info.omitidas + ' filas sin fecha, descripción o monto válidos no se incluyeron.');
+  }
+  if (info.recortadas) {
+    avisos.push('Solo se incluyeron los primeros ' + MAXIMO_FILAS_IMPORTACION + ' gastos; ' + info.recortadas + ' quedaron fuera. Impórtalos en otro archivo.');
+  }
+  actualizarContador();
+  vaciar($('contenedor-importacion'),
+    el('div', { class: 'cabecera-importacion' },
+      el('h3', { text: '📄 ' + info.nombreArchivo }),
+      contador,
+      el('p', { class: 'nota', text: 'Elige Familiar o Personal en cada gasto, revisa la categoría y guarda o descarta uno por uno.' }),
+      avisos.map((a) => el('p', { class: 'nota', text: a })),
+      el('button', { type: 'button', text: 'Cerrar importación', onclick: () => {
+        if (revisados === items.length || confirm('Quedan gastos sin revisar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
+          cerrarImportacion();
+        }
+      } })),
+    el('ul', { class: 'lista' }, tarjetas));
+}
+
+function cerrarImportacion() {
+  vaciar($('contenedor-importacion'));
+  $('contenedor-importacion').hidden = true;
+  $('contenedor-nuevo').hidden = false;
+  $('archivo-cartola').value = '';
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +1296,12 @@ function iniciar() {
   campoMonto($('ingreso-monto'));
   $('boton-ingreso').addEventListener('click', guardarIngreso);
   $('boton-nueva-categoria').addEventListener('click', () => abrirCategoria(null));
+  $('boton-importar').addEventListener('click', () => $('archivo-cartola').click());
+  $('archivo-cartola').addEventListener('change', (e) => {
+    if (e.target.files[0]) {
+      importarArchivo(e.target.files[0]);
+    }
+  });
   $('filtro-desactivadas').addEventListener('change', pintarConfig);
 
   if (window.google && google.accounts && google.accounts.id) {

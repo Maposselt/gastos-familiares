@@ -243,5 +243,18 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 }
 .aviso.error { background: var(--peligro); }
 
+.cabecera-importacion {
+  position: sticky;
+  top: 52px;
+  z-index: 4;
+  background: var(--fondo);
+  padding: 8px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--borde);
+}
+.contador { font-weight: 700; margin: 4px 0; }
+.tarjeta-importacion { margin-bottom: 16px; }
+.numero-importacion { font-size: .8rem; font-weight: 600; color: var(--texto-suave); margin-bottom: 4px; }
+
 .boton-google { min-height: 44px; margin: 12px 0; }
 .cargando { color: var(--texto-suave); font-style: italic; }

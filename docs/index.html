@@ -10,8 +10,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=5">
-  <script src="app.js?v=5" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=6">
+  <script src="app.js?v=6" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -33,7 +33,12 @@
 
     <section id="pantalla-nuevo" class="pantalla" hidden>
       <h2>Nuevo gasto</h2>
+      <div class="filtros">
+        <button type="button" id="boton-importar">📄 Importar cartola (Excel o CSV)</button>
+        <input type="file" id="archivo-cartola" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+      </div>
       <div id="contenedor-nuevo"></div>
+      <div id="contenedor-importacion" hidden></div>
     </section>
 
     <section id="pantalla-gastos" class="pantalla" hidden>

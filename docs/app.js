@@ -202,6 +202,8 @@ async function alEntrar(respuesta) {
     $('navegacion').hidden = false;
     $('nav-config').hidden = !estado.usuario.esAdmin;
     prepararIngresos();
+    vaciar($('filtro-pago'), el('option', { value: '', text: 'Todos' }),
+      estado.usuarios.map((u) => el('option', { value: u.id, text: u.nombre })));
     $('mensaje-entrar').textContent = '';
     if (estado.pantalla === 'config' && !estado.usuario.esAdmin) {
       estado.pantalla = 'nuevo';
@@ -326,6 +328,7 @@ function formularioGasto(opciones) {
   let categoriaManual = false;
   let consultaActual = 0;
   let temporizadorSugerencia = null;
+  let decision = '';
 
   // La descripción guardada es "glosa — detalle": aquí se separan para editarlas.
   const [glosaInicial, ...restoDetalle] = String(inicial.descripcion || '').split(SEPARADOR_DETALLE);
@@ -394,6 +397,10 @@ function formularioGasto(opciones) {
     categoriaManual = false;
     pintarCategorias(categoriaElegida || '');
     aplicarSugerencia();
+    // Si ya estaba marcado OK, cambiar el tipo obliga a revisar la categoría de nuevo.
+    if (decision === 'ok' && !categoria.value) {
+      marcarDecision('');
+    }
   }
 
   /** Pide al backend la sugerencia del diccionario (gratis, sin IA). */
@@ -413,8 +420,10 @@ function formularioGasto(opciones) {
   }
 
   function textoOpcion(o) {
+    const detalles = sugerencia.detalles && sugerencia.detalles.length
+      ? ' · Antes: ' + sugerencia.detalles.join(', ') : '';
     return etiquetaCategoria(o.categoria_id) + ' (' + o.veces + ' de ' + sugerencia.total +
-      (sugerencia.total === 1 ? ' vez' : ' veces') + (sugerencia.exacta ? '' : ', glosa parecida') + ')';
+      (sugerencia.total === 1 ? ' vez' : ' veces') + (sugerencia.exacta ? '' : ', glosa parecida') + ')' + detalles;
   }
 
   function aplicarSugerencia() {
@@ -447,6 +456,9 @@ function formularioGasto(opciones) {
   categoria.addEventListener('change', () => {
     categoriaManual = true;
     actualizarPista();
+    if (decision === 'ok' && !categoria.value) {
+      marcarDecision('');
+    }
   });
   descripcion.addEventListener('input', () => {
     clearTimeout(temporizadorSugerencia);
@@ -486,15 +498,50 @@ function formularioGasto(opciones) {
         : !datos.descripcion ? 'Falta la glosa.' : '';
   }
 
+  function faltanDatosCompletos(datos) {
+    return faltanDatosBasicos(datos) ||
+      (!datos.tipo ? 'Elige si el gasto es Familiar o Personal.' : !datos.categoria_id ? 'Elige una categoría.' : '');
+  }
+
   boton.addEventListener('click', () => {
     const datos = leerDatos();
-    const faltante = faltanDatosBasicos(datos) ||
-      (!datos.tipo ? 'Elige si el gasto es Familiar o Personal.' : !datos.categoria_id ? 'Elige una categoría.' : '');
+    const faltante = faltanDatosCompletos(datos);
     error.textContent = faltante;
     if (!faltante) {
       intentar(boton, () => opciones.alGuardar(datos));
     }
   });
+
+  // Modo "decidir y guardar al final" (importación): cada fila se marca OK,
+  // Por revisar o Descartar, y la pantalla guarda todas las decisiones juntas.
+  const botonesDecision = {};
+  if (opciones.conDecision) {
+    [['ok', opciones.textoOk || '✅ OK'], ['porRevisar', '⏸ Por revisar'], ['descartar', '🗑 Descartar']].forEach(([valor, texto]) => {
+      botonesDecision[valor] = el('button', {
+        type: 'button', class: 'decision decision-' + valor, 'aria-pressed': 'false', text: texto,
+        onclick: () => {
+          if (decision === valor) {
+            marcarDecision('');
+            return;
+          }
+          const datos = leerDatos();
+          const faltante = valor === 'ok' ? faltanDatosCompletos(datos) : valor === 'porRevisar' ? faltanDatosBasicos(datos) : '';
+          error.textContent = faltante;
+          if (!faltante) {
+            marcarDecision(valor);
+          }
+        }
+      });
+    });
+  }
+
+  function marcarDecision(valor) {
+    decision = valor;
+    Object.entries(botonesDecision).forEach(([v, b]) => b.setAttribute('aria-pressed', String(v === valor)));
+    if (opciones.alCambiarDecision) {
+      opciones.alCambiarDecision(decision);
+    }
+  }
 
   // "Por revisar": se guarda sin tipo ni categoría, para decidir más adelante.
   let botonPendiente = null;
@@ -514,10 +561,12 @@ function formularioGasto(opciones) {
   const notaTipo = opciones.sugerenciaTipo
     ? el('p', { class: 'nota', text: 'Según tu marca antigua: ' + opciones.sugerenciaTipo + '. Confírmalo eligiéndolo.' })
     : null;
-  const acciones = el('div', { class: 'acciones' }, boton, botonPendiente, opciones.botonesExtra || []);
+  const acciones = opciones.conDecision
+    ? el('div', { class: 'acciones decisiones', role: 'group', 'aria-label': 'Decisión' }, Object.values(botonesDecision))
+    : el('div', { class: 'acciones' }, boton, botonPendiente, opciones.botonesExtra || []);
 
   if (opciones.compacto) {
-    return el('div', { class: 'fila-compacta' },
+    const nodo = el('div', { class: 'fila-compacta' },
       el('div', { class: 'fc-datos' }, fecha, descripcion, monto),
       detalle,
       pistaSugerencia,
@@ -526,6 +575,15 @@ function formularioGasto(opciones) {
       pistaCategoria,
       error,
       acciones);
+    // La pantalla de importación lee la decisión de cada fila al guardar.
+    nodo.obtenerDecision = () => {
+      const datos = leerDatos();
+      const faltante = decision === 'ok' ? faltanDatosCompletos(datos) : decision === 'porRevisar' ? faltanDatosBasicos(datos) : '';
+      return { decision: decision, datos: datos, error: faltante };
+    };
+    nodo.mostrarError = (texto) => { error.textContent = texto; };
+    nodo.reiniciarDecision = () => marcarDecision('');
+    return nodo;
   }
   return el('div', { class: 'tarjeta' },
     el('label', {}, 'Fecha', fecha),
@@ -1001,65 +1059,102 @@ async function prepararRevision(resultado, nombreArchivo) {
   });
 }
 
+function textoAlerta(a) {
+  return a.enEstaCarga !== undefined
+    ? (a.nivel === 'rojo' ? '🔴' : '🟡') + ' Se repite en el gasto ' + (a.enEstaCarga + 1) + ' de este archivo'
+    : (a.nivel === 'rojo' ? '🔴 Ya registrado: ' : '🟡 Parecido a: ') + fechaVisible(a.fecha) + ' · ' + a.descripcion + ' · ' + pesos(a.monto);
+}
+
 /**
- * Una tarjeta por gasto. REGLA: cada uno se confirma por separado, con su
- * propio tipo; no hay forma de asignar el tipo a varios a la vez.
+ * Una fila por gasto, con su propia decisión: OK, Por revisar o Descartar.
+ * REGLA: cada gasto se confirma por separado, con su propio tipo; no hay forma
+ * de asignar el tipo o la decisión a varios a la vez. El botón final solo
+ * ejecuta lo que ya se decidió en cada fila.
  */
 function pintarRevision(items, duplicados, sugerencias, info) {
-  let revisados = 0;
   const contador = el('p', { class: 'contador' });
-  function actualizarContador() {
-    contador.textContent = 'Revisados ' + revisados + ' de ' + items.length;
-    if (revisados === items.length) {
-      contador.textContent += ' ✅ ¡Listo!';
-    }
+  const botonGuardar = el('button', { type: 'button', class: 'principal', text: 'Guardar decisiones' });
+  const resumenDecisiones = el('span', { class: 'resumen-decisiones' });
+
+  const filas = items.map((item, i) => {
+    const fila = { item: item, terminada: false, alertas: (duplicados[i] && duplicados[i].alertas) || [] };
+    fila.caja = el('li', { class: 'fila-importacion' });
+    fila.avisos = el('div', {}, fila.alertas.map((a) => el('div', { class: 'alerta compacta ' + a.nivel, text: textoAlerta(a) })));
+    fila.formulario = formularioGasto({
+      compacto: true,
+      conDecision: true,
+      // Con una alerta visible, marcar OK significa "guardar igual".
+      textoOk: fila.alertas.length ? '✅ OK (guardar igual)' : '✅ OK',
+      inicial: item,
+      sugerenciaInicial: sugerencias[i],
+      alCambiarDecision: actualizarBarra
+    });
+    vaciar(fila.caja, el('div', { class: 'numero-importacion', text: (i + 1) + ' de ' + items.length }), fila.avisos, fila.formulario);
+    return fila;
+  });
+
+  function terminar(fila, texto) {
+    fila.terminada = true;
+    fila.caja.classList.add('terminada');
+    vaciar(fila.caja, el('p', { class: 'nota', text: texto + ': ' + fechaVisible(fila.item.fecha) + ' · ' + fila.item.descripcion + ' · ' + pesos(fila.item.monto) }));
   }
 
-  const tarjetas = items.map((item, i) => {
-    const caja = el('li', { class: 'fila-importacion' });
-    function terminar(texto) {
-      revisados++;
-      actualizarContador();
-      caja.classList.add('terminada');
-      vaciar(caja, el('p', { class: 'nota', text: (i + 1) + '. ' + texto + ': ' + fechaVisible(item.fecha) + ' · ' + item.descripcion + ' · ' + pesos(item.monto) }));
-      estado.movimientos = null;
-    }
-    const alertas = (duplicados[i] && duplicados[i].alertas) || [];
-    const avisosDuplicado = alertas.map((a) => el('div', { class: 'alerta compacta ' + a.nivel },
-      a.enEstaCarga !== undefined
-        ? (a.nivel === 'rojo' ? '🔴' : '🟡') + ' Se repite en el gasto ' + (a.enEstaCarga + 1) + ' de este archivo'
-        : (a.nivel === 'rojo' ? '🔴 Ya registrado: ' : '🟡 Parecido a: ') + fechaVisible(a.fecha) + ' · ' + a.descripcion + ' · ' + pesos(a.monto)));
-    const descartar = el('button', { type: 'button', class: 'peligro', text: '🗑 Descartar', onclick: () => terminar('🗑️ Descartado') });
+  function actualizarBarra() {
+    const conteo = { ok: 0, porRevisar: 0, descartar: 0, '': 0 };
+    const pendientes = filas.filter((f) => !f.terminada);
+    pendientes.forEach((f) => { conteo[f.formulario.obtenerDecision().decision]++; });
+    const listos = items.length - pendientes.length;
+    contador.textContent = 'Listos ' + listos + ' de ' + items.length + (pendientes.length ? '' : ' ✅ ¡Terminado!');
+    resumenDecisiones.textContent = conteo.ok + ' OK · ' + conteo.porRevisar + ' por revisar · ' +
+      conteo.descartar + ' descartar · ' + conteo[''] + ' sin decidir';
+    botonGuardar.disabled = !(conteo.ok + conteo.porRevisar + conteo.descartar);
+  }
 
-    async function guardar(datos, confirmarDuplicado) {
-      const r = await llamar('guardarMovimiento', Object.assign({}, datos, {
-        origen: 'excel', confirmarDuplicado: confirmarDuplicado
-      }));
-      if (r.guardado) {
-        terminar(datos.porRevisar ? '⏸ Por revisar' : '✅ Guardado');
-        mostrarPendientes(r.pendientes);
+  async function guardarDecisiones() {
+    const aEnviar = [];
+    filas.filter((f) => !f.terminada).forEach((f) => {
+      const d = f.formulario.obtenerDecision();
+      if (!d.decision) {
         return;
       }
-      mostrarDuplicados(r.duplicados, {
-        guardarIgual: () => guardar(datos, true),
-        descartar: () => terminar('🗑️ Descartado')
+      if (d.error) {
+        f.formulario.mostrarError(d.error);
+        return;
+      }
+      if (d.decision === 'descartar') {
+        terminar(f, '🗑️ Descartado');
+        return;
+      }
+      aEnviar.push({ fila: f, datos: Object.assign({}, d.datos, {
+        origen: 'excel', porRevisar: d.decision === 'porRevisar', confirmarDuplicado: f.alertas.length > 0
+      }) });
+    });
+    if (aEnviar.length) {
+      const r = await llamar('guardarVarios', { decisiones: aEnviar.map((x) => x.datos) });
+      let guardados = 0;
+      r.resultados.forEach((resultado, j) => {
+        const { fila, datos } = aEnviar[j];
+        if (resultado.guardado) {
+          guardados++;
+          terminar(fila, datos.porRevisar ? '⏸ Por revisar' : '✅ Guardado');
+        } else if (resultado.duplicados) {
+          // Duplicado que no se veía antes (por ejemplo, con otro gasto de esta carga): se muestra y se vuelve a decidir.
+          fila.alertas = resultado.duplicados;
+          vaciar(fila.avisos, resultado.duplicados.map((a) => el('div', { class: 'alerta compacta ' + a.nivel, text: textoAlerta(a) })));
+          fila.formulario.reiniciarDecision();
+          fila.formulario.mostrarError('Se parece a otro gasto. Revísalo y vuelve a marcar OK para guardarlo igual.');
+        } else {
+          fila.formulario.mostrarError(resultado.error);
+        }
       });
+      estado.movimientos = null;
+      avisar(guardados + (guardados === 1 ? ' gasto guardado.' : ' gastos guardados.'));
+      mostrarPendientes(r.pendientes);
     }
-
-    vaciar(caja,
-      el('div', { class: 'numero-importacion', text: (i + 1) + ' de ' + items.length }),
-      avisosDuplicado,
-      formularioGasto({
-        compacto: true,
-        inicial: item,
-        sugerenciaInicial: sugerencias[i],
-        textoBoton: '💾 Guardar',
-        botonesExtra: [descartar],
-        alGuardar: (datos) => guardar(datos, false),
-        alDejarPendiente: (datos) => guardar(Object.assign({}, datos, { porRevisar: true }), false)
-      }));
-    return caja;
-  });
+    actualizarBarra();
+  }
+  botonGuardar.addEventListener('click', () => intentar(botonGuardar, guardarDecisiones));
+  const tarjetas = filas.map((f) => f.caja);
 
   const avisos = [];
   if (info.omitidas) {
@@ -1068,19 +1163,20 @@ function pintarRevision(items, duplicados, sugerencias, info) {
   if (info.recortadas) {
     avisos.push('Solo se incluyeron los primeros ' + MAXIMO_FILAS_IMPORTACION + ' gastos; ' + info.recortadas + ' quedaron fuera. Impórtalos en otro archivo.');
   }
-  actualizarContador();
+  actualizarBarra();
   vaciar($('contenedor-importacion'),
     el('div', { class: 'cabecera-importacion' },
       el('h3', { text: '📄 ' + info.nombreArchivo }),
       contador,
-      el('p', { class: 'nota', text: 'En cada gasto elige Familiar o Personal y revisa la categoría. Luego guárdalo, déjalo por revisar o descártalo.' }),
+      el('p', { class: 'nota', text: 'En cada gasto elige Familiar o Personal, revisa la categoría y marca OK, Por revisar o Descartar. Al final toca "Guardar decisiones".' }),
       avisos.map((a) => el('p', { class: 'nota', text: a })),
       el('button', { type: 'button', text: 'Cerrar importación', onclick: () => {
-        if (revisados === items.length || confirm('Quedan gastos sin revisar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
+        if (filas.every((f) => f.terminada) || confirm('Quedan gastos sin guardar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
           cerrarImportacion();
         }
       } })),
-    el('ul', { class: 'lista lista-importacion' }, tarjetas));
+    el('ul', { class: 'lista lista-importacion' }, tarjetas),
+    el('div', { class: 'barra-decisiones' }, resumenDecisiones, botonGuardar));
 }
 
 function cerrarImportacion() {
@@ -1148,7 +1244,8 @@ async function pintarGastos() {
   document.querySelectorAll('.selector-vista button').forEach((b) => {
     b.setAttribute('aria-pressed', String(b.dataset.vista === estado.vistaGastos));
   });
-  const delTipo = delMes.filter((m) => !tipo || m.tipo === tipo);
+  const pago = $('filtro-pago').value;
+  const delTipo = delMes.filter((m) => (!tipo || m.tipo === tipo) && (!pago || m.usuario_id === pago));
   if (estado.vistaGastos === 'resumen') {
     vaciar(lista, resumenPorCategoria(delTipo.filter((m) => m.estado === 'Confirmado'), mes));
     return;
@@ -1555,7 +1652,7 @@ function iniciar() {
     b.addEventListener('click', () => mostrarPantalla(b.dataset.pantalla));
   });
   $('boton-salir').addEventListener('click', salir);
-  ['filtro-mes', 'filtro-tipo', 'filtro-anulados'].forEach((id) => $(id).addEventListener('change', pintarGastos));
+  ['filtro-mes', 'filtro-tipo', 'filtro-pago', 'filtro-anulados'].forEach((id) => $(id).addEventListener('change', pintarGastos));
   document.querySelectorAll('.selector-vista button').forEach((b) => {
     b.addEventListener('click', () => {
       estado.vistaGastos = b.dataset.vista;

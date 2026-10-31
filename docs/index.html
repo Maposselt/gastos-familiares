@@ -10,8 +10,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=7">
-  <script src="app.js?v=7" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=8">
+  <script src="app.js?v=8" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -51,6 +51,11 @@
             <option value="">Todos</option>
             <option value="Familiar">Familiar</option>
             <option value="Personal">Personal</option>
+          </select>
+        </label>
+        <label>Pagó
+          <select id="filtro-pago">
+            <option value="">Todos</option>
           </select>
         </label>
         <label class="casilla"><input type="checkbox" id="filtro-anulados"> Mostrar anulados</label>

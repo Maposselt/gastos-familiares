@@ -80,7 +80,7 @@ h3 { font-size: 1rem; margin: 0 0 12px; }
 label { display: block; margin-bottom: 12px; font-weight: 600; font-size: .9rem; }
 label.casilla { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 
-input[type="text"], input[type="date"], input[type="month"], input[type="number"], select {
+input[type="text"], input[type="search"], input[type="date"], input[type="month"], input[type="number"], select {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -129,11 +129,15 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
   background: var(--familiar);
   font-size: .9rem;
 }
+.copias { margin: -4px 0 12px; font-size: .85rem; }
+.copias > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px; }
+.copias button.copia { padding: 4px 10px; font-size: .85rem; border-radius: 999px; }
 .error-campo { color: var(--peligro); font-size: .9rem; min-height: 1.2em; margin: 0 0 8px; }
 
 .filtros { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin-bottom: 12px; }
 .filtros label { flex: 1 1 150px; margin-bottom: 0; }
 .filtros label.casilla { flex: 0 0 auto; }
+.filtros label.buscar { flex: 3 1 220px; }
 
 .totales { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
 .total { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); padding: 10px 12px; }
@@ -317,7 +321,8 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 .selector-vista button:first-child { border-radius: 8px 0 0 8px; }
 .selector-vista button:last-child { border-radius: 0 8px 8px 0; border-left: 0; }
 .selector-vista button[aria-pressed="true"] { background: var(--acento); color: var(--acento-texto); border-color: var(--acento); }
-.fila-pendiente { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
+.fila-pendiente { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
+.fila-pendiente .acciones { margin: 0; }
 
 .cabecera-importacion {
   position: sticky;

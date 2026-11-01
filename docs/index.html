@@ -10,8 +10,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=8">
-  <script src="app.js?v=8" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=9">
+  <script src="app.js?v=9" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -59,6 +59,10 @@
           </select>
         </label>
         <label class="casilla"><input type="checkbox" id="filtro-anulados"> Mostrar anulados</label>
+      </div>
+      <div class="filtros">
+        <label class="buscar">🔍 Buscar <input type="search" id="filtro-texto" maxlength="60" autocomplete="off" placeholder="Glosa o detalle"></label>
+        <label class="casilla"><input type="checkbox" id="filtro-todos-meses"> En todos los meses</label>
       </div>
       <div id="totales-mes" class="totales"></div>
       <div class="selector-vista" role="group" aria-label="Vista">

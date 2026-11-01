@@ -158,6 +158,13 @@ function etiquetaCategoria(id) {
   return c ? c.categoria + ' / ' + c.subcategoria : 'Sin categoría';
 }
 
+/** Igual que en el backend: sin tildes ni mayúsculas; sinNumeros quita también los números (como el diccionario). */
+function normalizarTexto(texto, sinNumeros) {
+  const limpio = String(texto || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  return sinNumeros ? limpio.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim() : limpio;
+}
+
 // ---------------------------------------------------------------------------
 // Inicio de sesión con Google
 // ---------------------------------------------------------------------------
@@ -353,6 +360,7 @@ function formularioGasto(opciones) {
   const categoria = el('select', { disabled: true, 'aria-label': 'Categoría' });
   const pistaCategoria = el('p', { class: 'nota' });
   const pistaSugerencia = el('p', { class: 'sugerencia', hidden: true });
+  const zonaCopias = el('div', { class: 'copias', hidden: true });
   const rendir = el('input', { type: 'checkbox', checked: !!inicial.rendir_trabajo });
   const filaRendir = el('label', { class: 'casilla', hidden: true }, rendir, 'Rendir al trabajo');
   const error = el('p', { class: 'error-campo', role: 'alert' });
@@ -401,6 +409,13 @@ function formularioGasto(opciones) {
     if (decision === 'ok' && !categoria.value) {
       marcarDecision('');
     }
+    avisarClasificacion();
+  }
+
+  function avisarClasificacion() {
+    if (opciones.alCambiarClasificacion) {
+      opciones.alCambiarClasificacion();
+    }
   }
 
   /** Pide al backend la sugerencia del diccionario (gratis, sin IA). */
@@ -420,13 +435,54 @@ function formularioGasto(opciones) {
   }
 
   function textoOpcion(o) {
-    const detalles = sugerencia.detalles && sugerencia.detalles.length
-      ? ' · Antes: ' + sugerencia.detalles.join(', ') : '';
     return etiquetaCategoria(o.categoria_id) + ' (' + o.veces + ' de ' + sugerencia.total +
-      (sugerencia.total === 1 ? ' vez' : ' veces') + (sugerencia.exacta ? '' : ', glosa parecida') + ')' + detalles;
+      (sugerencia.total === 1 ? ' vez' : ' veces') + (sugerencia.exacta ? '' : ', glosa parecida') + ')';
+  }
+
+  /**
+   * Copia a ESTE gasto el detalle, el tipo y la categoría de otro (uno de
+   * antes o una fila de la misma importación). Es un toque del usuario sobre
+   * este gasto: no marca OK ni toca ningún otro gasto.
+   */
+  function aplicarCopia(copia) {
+    if (copia.detalle) {
+      detalle.value = copia.detalle;
+    }
+    const c = categoriaPorId(copia.categoria_id);
+    if (copia.tipo && c && c.activa && c.tipo === copia.tipo) {
+      elegirTipo(copia.tipo, copia.categoria_id);
+      categoriaManual = true;
+    }
+    if (decision === 'ok') {
+      marcarDecision('');
+    }
+    error.textContent = '';
+  }
+
+  // Botones "Copiar": detalles usados antes con esta glosa y filas parecidas de la importación.
+  let copiasExtra = [];
+  function pintarCopias() {
+    const deAntes = (sugerencia && sugerencia.detalles ? sugerencia.detalles : [])
+      .map((d) => typeof d === 'string' ? { texto: d } : d)
+      .map((d) => {
+        const c = categoriaPorId(d.categoria_id);
+        const conCategoria = c && c.activa && c.tipo === d.tipo;
+        return {
+          etiqueta: d.texto + (conCategoria ? ' · ' + d.tipo + ' / ' + etiquetaCategoria(d.categoria_id) : ''),
+          detalle: d.texto, tipo: conCategoria ? d.tipo : '', categoria_id: conCategoria ? d.categoria_id : ''
+        };
+      });
+    const botones = (lista) => lista.map((copia) => el('button', {
+      type: 'button', class: 'copia', text: copia.etiqueta, onclick: () => aplicarCopia(copia)
+    }));
+    vaciar(zonaCopias,
+      copiasExtra.length ? el('div', {}, el('span', { text: 'Copiar de ' }), botones(copiasExtra)) : null,
+      deAntes.length ? el('div', {}, el('span', { text: 'Copiar de antes: ' }), botones(deAntes)) : null);
+    zonaCopias.hidden = !copiasExtra.length && !deAntes.length;
   }
 
   function aplicarSugerencia() {
+    pintarCopias();
     if (!sugerencia) {
       pistaSugerencia.hidden = true;
       return;
@@ -459,7 +515,9 @@ function formularioGasto(opciones) {
     if (decision === 'ok' && !categoria.value) {
       marcarDecision('');
     }
+    avisarClasificacion();
   });
+  detalle.addEventListener('change', avisarClasificacion);
   descripcion.addEventListener('input', () => {
     clearTimeout(temporizadorSugerencia);
     const texto = descripcion.value.trim();
@@ -570,6 +628,7 @@ function formularioGasto(opciones) {
       el('div', { class: 'fc-datos' }, fecha, descripcion, monto),
       detalle,
       pistaSugerencia,
+      zonaCopias,
       notaTipo,
       el('div', { class: 'fc-clasificar' }, selectorTipo, categoria, filaRendir),
       pistaCategoria,
@@ -583,6 +642,11 @@ function formularioGasto(opciones) {
     };
     nodo.mostrarError = (texto) => { error.textContent = texto; };
     nodo.reiniciarDecision = () => marcarDecision('');
+    // La importación ofrece copiar la clasificación de otras filas con la misma glosa.
+    nodo.ponerCopias = (lista) => {
+      copiasExtra = lista;
+      pintarCopias();
+    };
     return nodo;
   }
   return el('div', { class: 'tarjeta' },
@@ -591,6 +655,7 @@ function formularioGasto(opciones) {
     el('label', {}, 'Glosa', descripcion),
     el('label', {}, 'Detalle (opcional)', detalle),
     pistaSugerencia,
+    zonaCopias,
     el('div', { class: 'etiqueta-campo', text: 'Tipo' }),
     notaTipo,
     selectorTipo,
@@ -618,15 +683,42 @@ function mostrarPendientes(pendientes) {
   const dialogo = $('dialogo');
   vaciar(dialogo,
     el('h3', { text: '💡 Encontramos la categoría de ' + pendientes.length + (pendientes.length === 1 ? ' gasto que estaba' : ' gastos que estaban') + ' por revisar' }),
-    el('p', { class: 'nota', text: 'Tienen la misma glosa que el gasto que acabas de confirmar. Revisa y confirma cada uno.' }),
-    el('ul', { class: 'lista' }, pendientes.map((m) => el('li', { class: 'fila-pendiente' },
-      el('span', { text: fechaVisible(m.fecha) + ' · ' + m.descripcion + ' · ' + pesos(m.monto) }),
-      el('button', { type: 'button', text: 'Revisar', onclick: () => abrirEdicion(m) })))),
+    el('p', { class: 'nota', text: 'Tienen la misma glosa que el gasto que acabas de confirmar. Confirma cada uno con la misma categoría, o ábrelo para revisarlo.' }),
+    el('ul', { class: 'lista' }, pendientes.map(filaPendiente)),
     el('div', { class: 'acciones' },
-      el('button', { type: 'button', text: 'Más tarde', onclick: () => dialogo.close() })));
+      el('button', { type: 'button', text: 'Cerrar', onclick: () => {
+        dialogo.close();
+        if (estado.pantalla === 'gastos') {
+          pintarGastos();
+        }
+      } })));
   if (!dialogo.open) {
     dialogo.showModal();
   }
+}
+
+/**
+ * Un gasto pendiente del aviso. "Confirmar" copia el tipo y la categoría del
+ * gasto recién confirmado a ESTE gasto solamente; cada uno se confirma aparte.
+ */
+function filaPendiente(m) {
+  const fila = el('li', { class: 'fila-pendiente' });
+  const texto = el('span', { text: fechaVisible(m.fecha) + ' · ' + m.descripcion + ' · ' + pesos(m.monto) });
+  const c = m.copiar && categoriaPorId(m.copiar.categoria_id);
+  const puedeCopiar = c && c.activa && c.tipo === m.copiar.tipo;
+  const botonConfirmar = puedeCopiar
+    ? el('button', { type: 'button', class: 'principal', text: '✅ ' + m.copiar.tipo + ' / ' + etiquetaCategoria(c.id) })
+    : null;
+  const botonRevisar = el('button', { type: 'button', text: 'Revisar', onclick: () => abrirEdicion(m) });
+  if (botonConfirmar) {
+    botonConfirmar.addEventListener('click', () => intentar(botonConfirmar, async () => {
+      await llamar('actualizarMovimiento', { id: m.id, tipo: m.copiar.tipo, categoria_id: m.copiar.categoria_id });
+      estado.movimientos = null;
+      vaciar(fila, el('span', { text: '✅ Confirmado: ' + fechaVisible(m.fecha) + ' · ' + m.descripcion + ' · ' + pesos(m.monto) }));
+    }));
+  }
+  vaciar(fila, texto, el('div', { class: 'acciones' }, botonConfirmar, botonRevisar));
+  return fila;
 }
 
 // ---------------------------------------------------------------------------
@@ -1076,8 +1168,12 @@ function pintarRevision(items, duplicados, sugerencias, info) {
   const botonGuardar = el('button', { type: 'button', class: 'principal', text: 'Guardar decisiones' });
   const resumenDecisiones = el('span', { class: 'resumen-decisiones' });
 
-  const filas = items.map((item, i) => {
-    const fila = { item: item, terminada: false, alertas: (duplicados[i] && duplicados[i].alertas) || [] };
+  let filas = [];
+  filas = items.map((item, i) => {
+    const fila = {
+      numero: i + 1, glosa: normalizarTexto(item.descripcion, true),
+      item: item, terminada: false, alertas: (duplicados[i] && duplicados[i].alertas) || []
+    };
     fila.caja = el('li', { class: 'fila-importacion' });
     fila.avisos = el('div', {}, fila.alertas.map((a) => el('div', { class: 'alerta compacta ' + a.nivel, text: textoAlerta(a) })));
     fila.formulario = formularioGasto({
@@ -1087,13 +1183,51 @@ function pintarRevision(items, duplicados, sugerencias, info) {
       textoOk: fila.alertas.length ? '✅ OK (guardar igual)' : '✅ OK',
       inicial: item,
       sugerenciaInicial: sugerencias[i],
-      alCambiarDecision: actualizarBarra
+      alCambiarDecision: actualizarBarra,
+      alCambiarClasificacion: () => actualizarCopias()
     });
     vaciar(fila.caja, el('div', { class: 'numero-importacion', text: (i + 1) + ' de ' + items.length }), fila.avisos, fila.formulario);
     return fila;
   });
 
+  /** Clasificación actual de una fila (la guardada, si ya terminó). */
+  function clasificacionDe(fila) {
+    if (fila.terminada) {
+      return fila.clasificacion || null;
+    }
+    const d = fila.formulario.obtenerDecision().datos;
+    return d.tipo && d.categoria_id ? { tipo: d.tipo, categoria_id: d.categoria_id, detalle: d.detalle } : null;
+  }
+
+  /**
+   * En cada fila sin terminar, ofrece "Copiar de la fila N" desde otras filas
+   * con la misma glosa que ya tienen tipo y categoría. Copiar es un toque
+   * sobre UNA fila; cada una se sigue marcando OK por separado.
+   */
+  function actualizarCopias() {
+    if (filas.length !== items.length) {
+      return;
+    }
+    const clasificadas = filas.map((f) => ({ fila: f, c: clasificacionDe(f) })).filter((x) => x.c && x.fila.glosa);
+    filas.filter((f) => !f.terminada).forEach((f) => {
+      const propia = clasificacionDe(f);
+      const copias = clasificadas
+        .filter((x) => x.fila !== f && x.fila.glosa === f.glosa)
+        .filter((x) => !propia || propia.tipo !== x.c.tipo || propia.categoria_id !== x.c.categoria_id ||
+          (x.c.detalle && x.c.detalle !== propia.detalle))
+        .slice(0, 2)
+        .map((x) => Object.assign({
+          etiqueta: 'la fila ' + x.fila.numero + ' · ' + x.c.tipo + ' / ' + etiquetaCategoria(x.c.categoria_id) +
+            (x.c.detalle ? ' · ' + x.c.detalle : '')
+        }, x.c));
+      f.formulario.ponerCopias(copias);
+    });
+  }
+
   function terminar(fila, texto) {
+    if (!fila.terminada && texto.startsWith('✅')) {
+      fila.clasificacion = clasificacionDe(fila);
+    }
     fila.terminada = true;
     fila.caja.classList.add('terminada');
     vaciar(fila.caja, el('p', { class: 'nota', text: texto + ': ' + fechaVisible(fila.item.fecha) + ' · ' + fila.item.descripcion + ' · ' + pesos(fila.item.monto) }));
@@ -1151,6 +1285,7 @@ function pintarRevision(items, duplicados, sugerencias, info) {
       avisar(guardados + (guardados === 1 ? ' gasto guardado.' : ' gastos guardados.'));
       mostrarPendientes(r.pendientes);
     }
+    actualizarCopias();
     actualizarBarra();
   }
   botonGuardar.addEventListener('click', () => intentar(botonGuardar, guardarDecisiones));
@@ -1163,6 +1298,7 @@ function pintarRevision(items, duplicados, sugerencias, info) {
   if (info.recortadas) {
     avisos.push('Solo se incluyeron los primeros ' + MAXIMO_FILAS_IMPORTACION + ' gastos; ' + info.recortadas + ' quedaron fuera. Impórtalos en otro archivo.');
   }
+  actualizarCopias();
   actualizarBarra();
   vaciar($('contenedor-importacion'),
     el('div', { class: 'cabecera-importacion' },
@@ -1245,17 +1381,25 @@ async function pintarGastos() {
     b.setAttribute('aria-pressed', String(b.dataset.vista === estado.vistaGastos));
   });
   const pago = $('filtro-pago').value;
-  const delTipo = delMes.filter((m) => (!tipo || m.tipo === tipo) && (!pago || m.usuario_id === pago));
+  // Búsqueda por glosa o detalle, sin importar tildes ni mayúsculas. Puede abarcar todos los meses.
+  const busqueda = normalizarTexto($('filtro-texto').value);
+  const todosLosMeses = busqueda && $('filtro-todos-meses').checked;
+  const dondeBuscar = todosLosMeses ? movimientos : delMes;
+  const filtrados = dondeBuscar.filter((m) => (!tipo || m.tipo === tipo) && (!pago || m.usuario_id === pago) &&
+    (!busqueda || normalizarTexto(m.descripcion).includes(busqueda)));
+  const periodo = todosLosMeses ? 'ningún mes' : nombreMes(mes);
+  const conBusqueda = busqueda ? ' que coincidan con "' + $('filtro-texto').value.trim() + '"' : '';
   if (estado.vistaGastos === 'resumen') {
-    vaciar(lista, resumenPorCategoria(delTipo.filter((m) => m.estado === 'Confirmado'), mes));
+    vaciar(lista, resumenPorCategoria(filtrados.filter((m) => m.estado === 'Confirmado'),
+      'No hay gastos confirmados' + conBusqueda + ' en ' + periodo + '.'));
     return;
   }
-  const visibles = delTipo
+  const visibles = filtrados
     .filter((m) => verAnulados || m.estado !== 'Anulado')
     .sort((a, b) => b.fecha.localeCompare(a.fecha));
   vaciar(lista, visibles.length
-    ? tablaGastos(visibles)
-    : el('p', { class: 'nota', text: 'No hay gastos en ' + nombreMes(mes) + '.' }));
+    ? tablaGastos(visibles, todosLosMeses)
+    : el('p', { class: 'nota', text: 'No hay gastos' + conBusqueda + ' en ' + periodo + '.' }));
 }
 
 function tarjetaTotal(titulo, monto) {
@@ -1263,20 +1407,20 @@ function tarjetaTotal(titulo, monto) {
 }
 
 /** Tabla compacta: Fecha · Glosa · Categoría · Pagó · Monto. Los gastos propios se abren para editar. */
-function tablaGastos(movimientos) {
+function tablaGastos(movimientos, conAnio) {
   return el('div', { class: 'tabla-contenedor' }, el('table', { class: 'tabla tabla-gastos' },
     el('thead', {}, el('tr', {},
       el('th', { text: 'Fecha' }), el('th', { text: 'Glosa' }), el('th', { text: 'Categoría' }),
       el('th', { text: 'Pagó' }), el('th', { text: 'Monto' }))),
-    el('tbody', {}, movimientos.map(filaGasto))));
+    el('tbody', {}, movimientos.map((m) => filaGasto(m, conAnio)))));
 }
 
-function filaGasto(m) {
+function filaGasto(m, conAnio) {
   const propio = m.usuario_id === estado.usuario.id;
   const clases = [m.tipo === 'Familiar' ? 'familiar' : '', m.estado === 'Anulado' ? 'anulado' : '', propio ? 'editable' : '']
     .filter(Boolean).join(' ');
   const fila = el('tr', { class: clases },
-    el('td', { text: fechaVisible(m.fecha).slice(0, 5) }),
+    el('td', { text: conAnio ? fechaVisible(m.fecha) : fechaVisible(m.fecha).slice(0, 5) }),
     el('td', { class: 'celda-glosa' },
       m.descripcion,
       m.estado !== 'Confirmado' ? el('span', { class: 'etiqueta', text: m.estado }) : null,
@@ -1302,9 +1446,9 @@ function filaGasto(m) {
  * Total del mes por categoría y subcategoría. Al tocar una fila se
  * despliegan (o se esconden) los gastos que la componen.
  */
-function resumenPorCategoria(movimientos, mes) {
+function resumenPorCategoria(movimientos, textoVacio) {
   if (!movimientos.length) {
-    return el('p', { class: 'nota', text: 'No hay gastos confirmados en ' + nombreMes(mes) + '.' });
+    return el('p', { class: 'nota', text: textoVacio });
   }
   return ['Familiar', 'Personal'].map((tipo) => {
     const delTipo = movimientos.filter((m) => m.tipo === tipo);
@@ -1652,7 +1796,12 @@ function iniciar() {
     b.addEventListener('click', () => mostrarPantalla(b.dataset.pantalla));
   });
   $('boton-salir').addEventListener('click', salir);
-  ['filtro-mes', 'filtro-tipo', 'filtro-pago', 'filtro-anulados'].forEach((id) => $(id).addEventListener('change', pintarGastos));
+  ['filtro-mes', 'filtro-tipo', 'filtro-pago', 'filtro-anulados', 'filtro-todos-meses'].forEach((id) => $(id).addEventListener('change', pintarGastos));
+  let temporizadorBusqueda = null;
+  $('filtro-texto').addEventListener('input', () => {
+    clearTimeout(temporizadorBusqueda);
+    temporizadorBusqueda = setTimeout(pintarGastos, 250);
+  });
   document.querySelectorAll('.selector-vista button').forEach((b) => {
     b.addEventListener('click', () => {
       estado.vistaGastos = b.dataset.vista;

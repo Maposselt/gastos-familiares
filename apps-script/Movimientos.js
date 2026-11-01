@@ -397,21 +397,22 @@ function nivelDuplicado_(a, b) {
 function buscarDuplicados_(usuario, candidato, existentes) {
   const alertas = [];
   existentes.forEach(function (h) {
+    // Los gastos que este usuario no puede ver (personales o por revisar del
+    // otro) se ignoran: avisar revelaría su fecha y monto.
+    if (!puedeVer_(usuario, h.movimiento)) {
+      return;
+    }
     const nivel = nivelDuplicado_(candidato, h);
     if (!nivel) {
       return;
     }
-    if (puedeVer_(usuario, h.movimiento)) {
-      alertas.push({
-        nivel: nivel,
-        id: String(h.movimiento.id),
-        fecha: fechaIso_(h.fecha),
-        monto: h.monto,
-        descripcion: String(h.movimiento.descripcion)
-      });
-    } else {
-      alertas.push({ nivel: nivel, fecha: fechaIso_(h.fecha), monto: h.monto, descripcion: 'Gasto personal de otra persona' });
-    }
+    alertas.push({
+      nivel: nivel,
+      id: String(h.movimiento.id),
+      fecha: fechaIso_(h.fecha),
+      monto: h.monto,
+      descripcion: String(h.movimiento.descripcion)
+    });
   });
   return alertas;
 }

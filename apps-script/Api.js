@@ -23,7 +23,8 @@ function acciones_() {
     sesion: function (usuario) {
       return {
         usuario: { id: usuario.id, nombre: usuario.nombre, esAdmin: usuario.esAdmin },
-        usuarios: usuariosActivos_()
+        usuarios: usuariosActivos_(),
+        inicioSaldos: inicioSaldos_()
       };
     },
     sugerir: sugerir_,
@@ -36,7 +37,11 @@ function acciones_() {
     listarCategorias: listarCategorias_,
     guardarCategoria: guardarCategoria_,
     listarIngresos: listarIngresos_,
-    guardarIngreso: guardarIngreso_
+    guardarIngreso: guardarIngreso_,
+    resumenBalance: resumenBalance_,
+    marcarSaldado: marcarSaldado_,
+    marcarRendido: marcarRendido_,
+    guardarInicioSaldos: guardarInicioSaldos_
   };
 }
 

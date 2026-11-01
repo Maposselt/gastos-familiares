@@ -23,7 +23,12 @@ const ESTRUCTURA = {
   UsoIA: [
     'fecha_hora', 'usuario_id', 'tipo_entrada', 'tokens_entrada',
     'tokens_salida', 'costo_usd'
-  ]
+  ],
+  // Meses saldados entre ustedes. "netos" guarda cuánto quedó a favor o en
+  // contra de cada uno al saldar (por ejemplo "u1=45300|u2=-45300").
+  Saldos: ['anio', 'mes', 'netos', 'saldado_por', 'saldado_en'],
+  // Gastos personales ya rendidos al trabajo.
+  Rendiciones: ['movimiento_id', 'rendido_en']
 };
 
 /**
@@ -44,6 +49,10 @@ const FORMATOS = {
   creado_en: 'dd/mm/yyyy hh:mm',
   modificado_en: 'dd/mm/yyyy hh:mm',
   actualizado_en: 'dd/mm/yyyy hh:mm',
+  saldado_en: 'dd/mm/yyyy hh:mm',
+  rendido_en: 'dd/mm/yyyy hh:mm',
+  netos: '@',
+  saldado_por: '@',
   monto: '#,##0',
   porcentaje: '0.0%',
   costo_usd: '0.0000'

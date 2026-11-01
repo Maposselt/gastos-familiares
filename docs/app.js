@@ -23,7 +23,8 @@ const estado = {
   movimientos: null,
   ingresos: null,
   pantalla: 'nuevo',
-  vistaGastos: 'lista'
+  vistaGastos: 'lista',
+  inicioSaldos: ''
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +202,7 @@ async function alEntrar(respuesta) {
     const sesion = await llamar('sesion');
     estado.usuario = sesion.usuario;
     estado.usuarios = sesion.usuarios;
+    estado.inicioSaldos = sesion.inicioSaldos || '';
     estado.categorias = await llamar('listarCategorias');
     estado.movimientos = null;
     estado.ingresos = null;
@@ -312,6 +314,8 @@ function mostrarPantalla(nombre) {
     pintarGastos();
   } else if (nombre === 'ingresos') {
     pintarIngresos();
+  } else if (nombre === 'balance') {
+    pintarBalance();
   } else if (nombre === 'config') {
     pintarConfig();
   }
@@ -1667,11 +1671,152 @@ function guardarIngreso() {
 }
 
 // ---------------------------------------------------------------------------
+// Pantalla: balance entre ustedes y rendición al trabajo
+// ---------------------------------------------------------------------------
+
+/**
+ * "Barb le debe a Max $26.000" a partir de los netos de cada uno
+ * (positivo = le deben; negativo = debe).
+ */
+function fraseSaldo(netos) {
+  const ids = Object.keys(netos);
+  const deudores = ids.filter((id) => netos[id] < 0);
+  const acreedores = ids.filter((id) => netos[id] > 0);
+  if (!deudores.length || !acreedores.length) {
+    return 'Están a mano';
+  }
+  if (deudores.length === 1 && acreedores.length === 1) {
+    return nombreUsuario(deudores[0]) + ' le debe a ' + nombreUsuario(acreedores[0]) + ' ' + pesos(netos[acreedores[0]]);
+  }
+  return ids.map((id) => nombreUsuario(id) + ': ' + (netos[id] > 0 ? '+' : '') + pesos(netos[id])).join(' · ');
+}
+
+async function pintarBalance() {
+  const contenido = $('contenido-balance');
+  vaciar(contenido, el('p', { class: 'cargando', text: 'Calculando balance…' }));
+  vaciar($('contenido-rendicion'));
+  const resumen = await intentar(null, () => llamar('resumenBalance'));
+  if (!resumen || estado.pantalla !== 'balance') {
+    return;
+  }
+  pintarRendicion(resumen.rendicion);
+  if (!resumen.inicio) {
+    vaciar(contenido, el('p', { class: 'nota', text: estado.usuario.esAdmin
+      ? 'Elige en ⚙️ Config desde qué mes se cuenta el balance.'
+      : 'El administrador todavía no elige desde qué mes se cuenta el balance.' }));
+    return;
+  }
+
+  vaciar(contenido,
+    el('div', { class: 'tarjeta saldo-total' },
+      el('span', { text: 'Saldo pendiente hoy' }),
+      el('strong', { text: fraseSaldo(resumen.acumulado) }),
+      el('p', { class: 'nota', text: 'Suma los meses sin saldar desde ' + nombreMes(resumen.inicio) +
+        '. Solo cuentan los gastos familiares confirmados: quien registró el gasto es quien lo pagó.' })),
+    resumen.meses.map(tarjetaMesBalance));
+}
+
+/** Un mes: saldo, cuánto pagó cada uno y su parte, y el botón para saldarlo. */
+function tarjetaMesBalance(m) {
+  const s = m.saldado;
+  const estadoMes = !s
+    ? el('button', { type: 'button', text: 'Marcar saldado', onclick: (e) => marcarSaldado(e.target, m.mes, true) })
+    : el('div', { class: 'estado-saldo' },
+      el('span', { text: '✅ Saldado por ' + s.por + ' el ' + fechaVisible(s.en) }),
+      s.cambio ? el('span', { class: 'alerta compacta amarillo', text: '⚠️ Cambió después de saldarse' }) : null,
+      s.cambio
+        ? el('button', { type: 'button', text: 'Saldar de nuevo', onclick: (e) => marcarSaldado(e.target, m.mes, true) })
+        : null,
+      el('button', { type: 'button', class: 'enlace', text: 'Desmarcar', onclick: (e) => marcarSaldado(e.target, m.mes, false) }));
+  return el('div', { class: 'tarjeta mes-balance' + (s && !s.cambio ? ' saldado' : '') },
+    el('div', { class: 'mes-balance-cabecera' },
+      el('h3', { text: nombreMes(m.mes) }),
+      el('strong', { text: fraseSaldo(m.netos) + (s ? ' (saldado)' : '') })),
+    el('div', { class: 'mes-balance-detalle' }, estado.usuarios.map((u) => el('span', {},
+      u.nombre + ' pagó ', el('b', { text: pesos(m.pagado[u.id] || 0) }),
+      ' · su parte ', el('b', { text: pesos(m.parte[u.id] || 0) })))),
+    estadoMes);
+}
+
+function marcarSaldado(boton, mes, saldado) {
+  const pregunta = saldado
+    ? '¿Marcar ' + nombreMes(mes) + ' como saldado? Ese mes deja de sumar al saldo pendiente.'
+    : '¿Desmarcar ' + nombreMes(mes) + '? Su saldo vuelve a sumar al pendiente.';
+  if (!confirm(pregunta)) {
+    return;
+  }
+  intentar(boton, async () => {
+    await llamar('marcarSaldado', { mes: mes, saldado: saldado });
+    avisar(saldado ? 'Mes saldado.' : 'Mes desmarcado.');
+    pintarBalance();
+  });
+}
+
+/** Mis gastos por rendir al trabajo, agrupados por mes, con una casilla "Rendido" en cada uno. */
+function pintarRendicion(gastos) {
+  const contenedor = $('contenido-rendicion');
+  if (!gastos.length) {
+    vaciar(contenedor, el('p', { class: 'nota', text: 'No tienes gastos marcados "Rendir al trabajo".' }));
+    return;
+  }
+  const porMes = new Map();
+  gastos.forEach((g) => {
+    const mes = g.fecha.slice(0, 7);
+    if (!porMes.has(mes)) {
+      porMes.set(mes, []);
+    }
+    porMes.get(mes).push(g);
+  });
+  const suma = (lista) => lista.reduce((s, g) => s + g.monto, 0);
+  const faltaTotal = suma(gastos.filter((g) => !g.rendido));
+  vaciar(contenedor,
+    el('p', { class: 'nota', text: faltaTotal ? 'Falta rendir en total: ' + pesos(faltaTotal) : '✅ Tienes todo rendido.' }),
+    Array.from(porMes.entries()).map(([mes, lista]) => {
+      const falta = suma(lista.filter((g) => !g.rendido));
+      return el('details', { class: 'tarjeta rendicion-mes', open: falta > 0 },
+        el('summary', { text: nombreMes(mes) + ' · Total ' + pesos(suma(lista)) +
+          (falta ? ' · Falta rendir ' + pesos(falta) : ' · ✅ Todo rendido') }),
+        el('ul', { class: 'lista' }, lista.map((g) => {
+          const casilla = el('input', { type: 'checkbox', checked: g.rendido, 'aria-label': 'Rendido: ' + g.descripcion });
+          casilla.addEventListener('change', () => intentar(casilla, async () => {
+            try {
+              await llamar('marcarRendido', { id: g.id, rendido: casilla.checked });
+            } catch (error) {
+              casilla.checked = !casilla.checked;
+              throw error;
+            }
+            g.rendido = casilla.checked;
+            pintarRendicion(gastos);
+          }));
+          return el('li', { class: 'fila-rendicion' + (g.rendido ? ' rendido' : '') },
+            el('label', { class: 'casilla' }, casilla, 'Rendido'),
+            el('span', { text: fechaVisible(g.fecha) + ' · ' + g.descripcion }),
+            el('span', { class: 'celda-monto', text: pesos(g.monto) }));
+        })));
+    }));
+}
+
+// ---------------------------------------------------------------------------
 // Pantalla: configuración de categorías (solo administrador)
 // ---------------------------------------------------------------------------
 
+function guardarInicioSaldos() {
+  const boton = $('boton-inicio-saldos');
+  const mes = $('inicio-saldos').value;
+  if (!mes) {
+    avisar('Elige un mes.', true);
+    return;
+  }
+  intentar(boton, async () => {
+    const r = await llamar('guardarInicioSaldos', { mes: mes });
+    estado.inicioSaldos = r.inicio;
+    avisar('Mes de inicio guardado: ' + nombreMes(r.inicio) + '.');
+  });
+}
+
 /** Una tabla por tipo; el nombre de la categoría se muestra una vez por grupo. */
 function pintarConfig() {
+  $('inicio-saldos').value = estado.inicioSaldos || '';
   const verDesactivadas = $('filtro-desactivadas').checked;
   vaciar($('lista-categorias'), ['Familiar', 'Personal'].map((tipo) => {
     const familiar = tipo === 'Familiar';
@@ -1818,6 +1963,7 @@ function iniciar() {
     }
   });
   $('filtro-desactivadas').addEventListener('change', pintarConfig);
+  $('boton-inicio-saldos').addEventListener('click', guardarInicioSaldos);
 
   if (window.google && google.accounts && google.accounts.id) {
     iniciarGoogle();

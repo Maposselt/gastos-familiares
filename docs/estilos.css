@@ -339,3 +339,20 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 
 .boton-google { min-height: 44px; margin: 12px 0; }
 .cargando { color: var(--texto-suave); font-style: italic; }
+
+/* Balance y rendición */
+.saldo-total span { display: block; font-size: .85rem; color: var(--texto-suave); }
+.saldo-total strong { display: block; font-size: 1.3rem; margin: 2px 0 4px; }
+.mes-balance { padding: 12px 14px; }
+.mes-balance-cabecera { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.mes-balance-cabecera h3 { margin: 0; }
+.mes-balance-detalle { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 10px; font-size: .9rem; color: var(--texto-suave); }
+.mes-balance-detalle b { color: var(--texto); font-weight: 600; }
+.mes-balance.saldado { opacity: .75; }
+.estado-saldo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.estado-saldo .alerta { margin: 0; padding: 2px 8px; }
+.rendicion-mes summary { cursor: pointer; font-weight: 600; }
+.fila-rendicion { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
+.fila-rendicion span:nth-child(2) { flex: 1; }
+.fila-rendicion label.casilla { margin: 0; }
+.fila-rendicion.rendido span { color: var(--texto-suave); text-decoration: line-through; }

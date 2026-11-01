@@ -38,7 +38,8 @@ function sugerirVarios_(usuario, datos) {
  * Detalles que se agregaron antes a cada glosa ("glosa — detalle"), solo de
  * los gastos que este usuario puede ver. Las variantes que solo cambian en
  * tildes o mayúsculas cuentan como el mismo detalle.
- * Devuelve { glosa: { detalleNormalizado: { texto, veces } } }.
+ * Devuelve { glosa: { detalleNormalizado: { texto, veces, tipo, categoria_id } } },
+ * con el tipo y la categoría de la última vez que se usó ese detalle.
  */
 function detallesPorGlosa_(usuario) {
   const resultado = {};
@@ -53,24 +54,35 @@ function detallesPorGlosa_(usuario) {
     resultado[glosa] = resultado[glosa] || {};
     resultado[glosa][clave] = resultado[glosa][clave] || { texto: detalle, veces: 0 };
     resultado[glosa][clave].veces++;
+    if (m.estado === 'Confirmado' && m.categoria_id) {
+      resultado[glosa][clave].tipo = m.tipo;
+      resultado[glosa][clave].categoria_id = m.categoria_id;
+    }
   });
   return resultado;
 }
 
-/** Los 3 detalles más usados entre las glosas encontradas. */
+/** Los 3 detalles más usados entre las glosas encontradas, con su última categoría. */
 function detallesFrecuentes_(detalles, glosas) {
   const conteo = {};
   glosas.forEach(function (g) {
     Object.keys(detalles[g] || {}).forEach(function (clave) {
       const d = detalles[g][clave];
-      conteo[clave] = conteo[clave] || { texto: d.texto, veces: 0 };
+      conteo[clave] = conteo[clave] || { texto: d.texto, veces: 0, tipo: '', categoria_id: '' };
       conteo[clave].veces += d.veces;
+      if (d.categoria_id) {
+        conteo[clave].tipo = d.tipo;
+        conteo[clave].categoria_id = d.categoria_id;
+      }
     });
   });
   return Object.keys(conteo)
     .sort(function (a, b) { return conteo[b].veces - conteo[a].veces; })
     .slice(0, 3)
-    .map(function (clave) { return conteo[clave].texto; });
+    .map(function (clave) {
+      const d = conteo[clave];
+      return { texto: d.texto, tipo: d.tipo, categoria_id: d.categoria_id };
+    });
 }
 
 /** Filas del diccionario cuya categoría sigue activa y es del mismo tipo. */

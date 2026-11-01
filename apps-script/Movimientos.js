@@ -63,7 +63,7 @@ function publicarMovimiento_(m, repartos) {
  * ahora el diccionario ya sabe cómo clasificarlos. Cada uno se sigue
  * confirmando por separado.
  */
-function pendientesConGlosa_(usuario, glosa, excluirId) {
+function pendientesConGlosa_(usuario, glosa, excluirId, copiar) {
   const buscada = normalizarGlosa_(glosa);
   if (!buscada) {
     return [];
@@ -73,7 +73,13 @@ function pendientesConGlosa_(usuario, glosa, excluirId) {
       return m.estado === 'Por revisar' && m.usuario_id === usuario.id && m.id !== excluirId &&
         normalizarGlosa_(glosaDe_(m)) === buscada;
     })
-    .map(function (m) { return publicarMovimiento_(m); });
+    .map(function (m) { return conCopia_(publicarMovimiento_(m), copiar); });
+}
+
+/** Agrega al gasto pendiente el tipo y la categoría del gasto recién confirmado, para copiarlos con un toque. */
+function conCopia_(pendiente, copiar) {
+  pendiente.copiar = { tipo: copiar.tipo, categoria_id: copiar.categoria_id };
+  return pendiente;
 }
 
 /**
@@ -132,7 +138,10 @@ function guardarMovimiento_(usuario, datos) {
       agregarFilas_('Repartos', calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto));
     }
     aprenderGlosa_(v.glosa, v.tipo, v.categoria.id);
-    return { guardado: true, id: movimiento.id, pendientes: pendientesConGlosa_(usuario, v.glosa, movimiento.id) };
+    return {
+      guardado: true, id: movimiento.id,
+      pendientes: pendientesConGlosa_(usuario, v.glosa, movimiento.id, { tipo: v.tipo, categoria_id: v.categoria.id })
+    };
   });
 }
 
@@ -195,7 +204,7 @@ function guardarVarios_(usuario, datos) {
             Array.prototype.push.apply(repartos, calcularReparto_(movimiento.id, v.categoria, v.fecha, v.monto, contexto));
           }
           sumarAlDiccionario_(diccionario, v.glosa, v.tipo, v.categoria.id);
-          glosasConfirmadas[normalizarGlosa_(v.glosa)] = true;
+          glosasConfirmadas[normalizarGlosa_(v.glosa)] = { tipo: v.tipo, categoria_id: v.categoria.id };
         }
         return { guardado: true, id: movimiento.id };
       } catch (error) {
@@ -218,7 +227,7 @@ function guardarVarios_(usuario, datos) {
         return m.estado === 'Por revisar' && m.usuario_id === usuario.id && !nuevos[m.id] &&
           glosasConfirmadas[normalizarGlosa_(glosaDe_(m))];
       })
-      .map(function (m) { return publicarMovimiento_(m); });
+      .map(function (m) { return conCopia_(publicarMovimiento_(m), glosasConfirmadas[normalizarGlosa_(glosaDe_(m))]); });
     return { resultados: resultados, pendientes: pendientes };
   });
 }
@@ -293,7 +302,10 @@ function actualizarMovimiento_(usuario, datos) {
       return { actualizado: true, pendientes: [] };
     }
     aprenderGlosa_(glosaDe_(movimiento), v.tipo, v.categoria.id);
-    return { actualizado: true, pendientes: pendientesConGlosa_(usuario, glosaDe_(movimiento), movimiento.id) };
+    return {
+      actualizado: true,
+      pendientes: pendientesConGlosa_(usuario, glosaDe_(movimiento), movimiento.id, { tipo: v.tipo, categoria_id: v.categoria.id })
+    };
   });
 }
 

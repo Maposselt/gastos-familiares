@@ -356,3 +356,6 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 .fila-rendicion span:nth-child(2) { flex: 1; }
 .fila-rendicion label.casilla { margin: 0; }
 .fila-rendicion.rendido span { color: var(--texto-suave); text-decoration: line-through; }
+
+/* Sugerencia de la IA */
+.sugerencia-ia { margin: -4px 0 12px; font-size: .9rem; color: var(--texto-suave); }

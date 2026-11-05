@@ -278,6 +278,10 @@ async function llamar(accion, datos) {
     }
   }
   if (estado.modoGet) {
+    // Por URL no caben fotos ni PDF.
+    if (cuerpo.length > 6000) {
+      throw new Error('Esta función no está disponible con tu conexión actual. Recarga la página e intenta de nuevo.');
+    }
     try {
       const r = await fetch(URL_BACKEND + '?payload=' + encodeURIComponent(cuerpo));
       respuesta = await r.json();
@@ -365,6 +369,9 @@ function formularioGasto(opciones) {
   const pistaCategoria = el('p', { class: 'nota' });
   const pistaSugerencia = el('p', { class: 'sugerencia', hidden: true });
   const zonaCopias = el('div', { class: 'copias', hidden: true });
+  const zonaIA = el('div', { class: 'sugerencia-ia', hidden: true });
+  // Sugerencia de la IA: { Familiar: id, Personal: id }. Solo se muestra la del tipo elegido.
+  let sugerenciaIA = null;
   const rendir = el('input', { type: 'checkbox', checked: !!inicial.rendir_trabajo });
   const filaRendir = el('label', { class: 'casilla', hidden: true }, rendir, 'Rendir al trabajo');
   const error = el('p', { class: 'error-campo', role: 'alert' });
@@ -485,8 +492,51 @@ function formularioGasto(opciones) {
     zonaCopias.hidden = !copiasExtra.length && !deAntes.length;
   }
 
+  /**
+   * Botón "Sugerir con IA": aparece solo si el diccionario no tiene
+   * sugerencia (para el tipo elegido). REGLA: la IA nunca elige el tipo; se
+   * muestra solo su sugerencia del tipo que eligió el usuario.
+   */
+  function pintarIA() {
+    const delDiccionario = sugerencia && sugerencia.opciones.some((o) => !tipo || o.tipo === tipo);
+    const texto = descripcion.value.trim();
+    zonaIA.hidden = !!delDiccionario || (!sugerenciaIA && texto.length < 3);
+    if (zonaIA.hidden) {
+      return;
+    }
+    if (!sugerenciaIA) {
+      const botonIA = el('button', { type: 'button', class: 'copia', text: '🤖 Sugerir categoría con IA' });
+      botonIA.addEventListener('click', () => intentar(botonIA, async () => {
+        const r = await llamar('sugerirConIA', { descripcion: texto });
+        if (descripcion.value.trim() !== texto) {
+          return;
+        }
+        sugerenciaIA = { Familiar: r.Familiar, Personal: r.Personal };
+        avisar('Sugerencia lista. ' + textoUsoIA(r.uso));
+        aplicarSugerencia();
+      }));
+      vaciar(zonaIA, botonIA);
+      return;
+    }
+    if (!tipo) {
+      vaciar(zonaIA, '🤖 La IA tiene una sugerencia. Elige si es Familiar o Personal para verla.');
+      return;
+    }
+    const c = categoriaPorId(sugerenciaIA[tipo]);
+    if (!c || !c.activa || c.tipo !== tipo) {
+      vaciar(zonaIA, '🤖 La IA no encontró una categoría ' + tipo + ' para esta glosa.');
+      return;
+    }
+    vaciar(zonaIA, '🤖 Sugerida por IA para ' + tipo + ': ' + etiquetaCategoria(c.id) + '. Revísala antes de confirmar.');
+    if (!categoriaManual && !categoria.value) {
+      categoria.value = c.id;
+      actualizarPista();
+    }
+  }
+
   function aplicarSugerencia() {
     pintarCopias();
+    pintarIA();
     if (!sugerencia) {
       pistaSugerencia.hidden = true;
       return;
@@ -524,6 +574,8 @@ function formularioGasto(opciones) {
   detalle.addEventListener('change', avisarClasificacion);
   descripcion.addEventListener('input', () => {
     clearTimeout(temporizadorSugerencia);
+    sugerenciaIA = null;
+    pintarIA();
     const texto = descripcion.value.trim();
     if (texto.length < 3) {
       consultaActual++;
@@ -540,6 +592,8 @@ function formularioGasto(opciones) {
     aplicarSugerencia();
   } else if (opciones.idMovimiento) {
     buscarSugerencia({ id: opciones.idMovimiento });
+  } else if (opciones.buscarAlIniciar && glosaInicial.trim().length >= 3) {
+    buscarSugerencia({ descripcion: glosaInicial.trim() });
   }
 
   function leerDatos() {
@@ -632,6 +686,7 @@ function formularioGasto(opciones) {
       el('div', { class: 'fc-datos' }, fecha, descripcion, monto),
       detalle,
       pistaSugerencia,
+      zonaIA,
       zonaCopias,
       notaTipo,
       el('div', { class: 'fc-clasificar' }, selectorTipo, categoria, filaRendir),
@@ -659,6 +714,7 @@ function formularioGasto(opciones) {
     el('label', {}, 'Glosa', descripcion),
     el('label', {}, 'Detalle (opcional)', detalle),
     pistaSugerencia,
+    zonaIA,
     zonaCopias,
     el('div', { class: 'etiqueta-campo', text: 'Tipo' }),
     notaTipo,
@@ -729,9 +785,69 @@ function filaPendiente(m) {
 // Pantalla: nuevo gasto
 // ---------------------------------------------------------------------------
 
-function pintarNuevo(fechaAnterior) {
+/** "Uso de IA en noviembre: US$0,04 de US$2". */
+function textoUsoIA(uso) {
+  const dolares = (n) => 'US$' + Number(n).toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  return 'Uso de IA en ' + nombreMes(uso.mes).toLowerCase() + ': ' + dolares(uso.gastado) + ' de ' + dolares(uso.limite) + '.';
+}
+
+/** Base64 de un archivo (sin el prefijo "data:..."). */
+async function archivoBase64(archivo) {
+  const bytes = new Uint8Array(await archivo.arrayBuffer());
+  let binario = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binario += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binario);
+}
+
+/** Achica la foto (lado mayor 1568 px, JPEG) para que la IA cueste menos. */
+async function imagenReducida(archivo) {
+  let imagen;
+  try {
+    imagen = await createImageBitmap(archivo);
+  } catch (error) {
+    throw new Error('No pude abrir la imagen. Prueba con una foto JPG o PNG.');
+  }
+  const escala = Math.min(1, 1568 / Math.max(imagen.width, imagen.height));
+  const lienzo = document.createElement('canvas');
+  lienzo.width = Math.round(imagen.width * escala);
+  lienzo.height = Math.round(imagen.height * escala);
+  lienzo.getContext('2d').drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+  return lienzo.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+
+/**
+ * Foto de boleta: la IA lee fecha, monto, comercio y detalle, y se llena el
+ * formulario. El tipo y la categoría los elige el usuario, como siempre.
+ */
+async function leerFotoBoleta(archivo) {
+  const boton = $('boton-boleta');
+  await intentar(boton, async () => {
+    if (archivo.size > 20 * 1024 * 1024) {
+      throw new Error('La foto es muy grande.');
+    }
+    vaciar($('contenedor-nuevo'), el('p', { class: 'cargando', text: '📷 Leyendo la boleta con IA…' }));
+    try {
+      const r = await llamar('leerBoleta', { tipo: 'image/jpeg', base64: await imagenReducida(archivo) });
+      pintarNuevo(undefined, { fecha: r.fecha || hoyIso(), monto: r.monto, descripcion: r.descripcion,
+        detalle: r.detalle ? SEPARADOR_DETALLE + r.detalle : '' });
+      avisar('Revisa los datos de la boleta antes de guardar. ' + textoUsoIA(r.uso));
+    } catch (error) {
+      pintarNuevo();
+      throw error;
+    }
+  });
+  $('archivo-boleta').value = '';
+}
+
+function pintarNuevo(fechaAnterior, deBoleta) {
+  const inicial = deBoleta
+    ? { fecha: deBoleta.fecha, monto: deBoleta.monto, descripcion: deBoleta.descripcion + deBoleta.detalle }
+    : { fecha: fechaAnterior };
   vaciar($('contenedor-nuevo'), formularioGasto({
-    inicial: { fecha: fechaAnterior },
+    inicial: inicial,
+    buscarAlIniciar: !!deBoleta,
     textoBoton: 'Guardar gasto',
     alGuardar: (datos) => guardarNuevo(datos, false),
     alDejarPendiente: (datos) => guardarNuevo(Object.assign({}, datos, { porRevisar: true }), false)
@@ -1005,6 +1121,14 @@ async function importarArchivo(archivo) {
   contenedor.hidden = false;
   $('contenedor-nuevo').hidden = true;
   try {
+    // PDF: lo lee la IA y los cargos pasan directo a la revisión de siempre, gasto por gasto.
+    if (/\.pdf$/i.test(archivo.name) || archivo.type === 'application/pdf') {
+      vaciar(contenedor, el('p', { class: 'cargando', text: '📄 Leyendo ' + archivo.name + ' con IA… puede tardar hasta un minuto.' }));
+      const r = await llamar('leerCartolaPdf', { tipo: 'application/pdf', base64: await archivoBase64(archivo) });
+      avisar(r.items.length + ' cargos encontrados. ' + textoUsoIA(r.uso));
+      await prepararRevision({ items: r.items, omitidas: r.omitidas }, archivo.name);
+      return;
+    }
     const buffer = await archivo.arrayBuffer();
     const filas = /\.csv$/i.test(archivo.name) ? leerCsv(buffer) : await leerExcel(buffer);
     const detectado = detectarColumnas(filas) || adivinarColumnas(filas);
@@ -1817,6 +1941,11 @@ function guardarInicioSaldos() {
 /** Una tabla por tipo; el nombre de la categoría se muestra una vez por grupo. */
 function pintarConfig() {
   $('inicio-saldos').value = estado.inicioSaldos || '';
+  $('uso-ia').textContent = 'Consultando uso de IA…';
+  intentar(null, async () => {
+    const uso = await llamar('usoIA');
+    $('uso-ia').textContent = '🤖 ' + textoUsoIA(uso) + ' Al llegar al tope, la IA se pausa hasta el mes siguiente.';
+  });
   const verDesactivadas = $('filtro-desactivadas').checked;
   vaciar($('lista-categorias'), ['Familiar', 'Personal'].map((tipo) => {
     const familiar = tipo === 'Familiar';
@@ -1964,6 +2093,12 @@ function iniciar() {
   });
   $('filtro-desactivadas').addEventListener('change', pintarConfig);
   $('boton-inicio-saldos').addEventListener('click', guardarInicioSaldos);
+  $('boton-boleta').addEventListener('click', () => $('archivo-boleta').click());
+  $('archivo-boleta').addEventListener('change', (e) => {
+    if (e.target.files[0]) {
+      leerFotoBoleta(e.target.files[0]);
+    }
+  });
 
   if (window.google && google.accounts && google.accounts.id) {
     iniciarGoogle();

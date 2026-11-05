@@ -10,8 +10,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=10">
-  <script src="app.js?v=10" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=11">
+  <script src="app.js?v=11" defer></script>
   <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
@@ -34,8 +34,10 @@
     <section id="pantalla-nuevo" class="pantalla" hidden>
       <h2>Nuevo gasto</h2>
       <div class="filtros">
-        <button type="button" id="boton-importar">📄 Importar cartola (Excel o CSV)</button>
-        <input type="file" id="archivo-cartola" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        <button type="button" id="boton-importar">📄 Importar cartola (Excel, CSV o PDF)</button>
+        <input type="file" id="archivo-cartola" accept=".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        <button type="button" id="boton-boleta">📷 Foto de boleta</button>
+        <input type="file" id="archivo-boleta" accept="image/*" hidden>
       </div>
       <div id="contenedor-nuevo"></div>
       <div id="contenedor-importacion" hidden></div>
@@ -100,6 +102,11 @@
         <label>Contar el balance desde <input type="month" id="inicio-saldos"></label>
         <button type="button" id="boton-inicio-saldos" class="principal">Guardar mes de inicio</button>
         <p class="nota">Los meses anteriores no cuentan como deuda.</p>
+      </div>
+      <h2>Inteligencia artificial</h2>
+      <div class="tarjeta">
+        <p id="uso-ia"></p>
+        <p class="nota">Lo usan los dos y el tope es compartido. Solo se envía a la IA lo que suben a propósito: la glosa, la foto o el PDF.</p>
       </div>
       <h2>Configuración de categorías</h2>
       <div class="filtros">

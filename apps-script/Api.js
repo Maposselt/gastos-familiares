@@ -7,7 +7,8 @@
  * La respuesta siempre es { ok: true, datos } o { ok: false, error }.
  */
 
-const LARGO_MAXIMO_PEDIDO = 200000;
+// Alcanza para una foto o un PDF de hasta 5 MB en base64; las demás acciones validan sus propios largos.
+const LARGO_MAXIMO_PEDIDO = 7500000;
 
 function doPost(e) {
   return atender_(e && e.postData ? e.postData.contents : '');
@@ -41,7 +42,11 @@ function acciones_() {
     resumenBalance: resumenBalance_,
     marcarSaldado: marcarSaldado_,
     marcarRendido: marcarRendido_,
-    guardarInicioSaldos: guardarInicioSaldos_
+    guardarInicioSaldos: guardarInicioSaldos_,
+    usoIA: usoIA_,
+    sugerirConIA: sugerirConIA_,
+    leerBoleta: leerBoleta_,
+    leerCartolaPdf: leerCartolaPdf_
   };
 }
 

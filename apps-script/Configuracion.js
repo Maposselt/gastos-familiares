@@ -178,6 +178,59 @@ function quitarPrefijoHistorico() {
 }
 
 /**
+ * Convierte las fechas de Movimientos guardadas como texto (por ejemplo
+ * "15/03/2025") en fechas de verdad, para que las fórmulas las entiendan.
+ * El día no cambia: se lee igual que en la app. Solo toca la columna "fecha"
+ * y solo las filas que cambian. Se ejecuta a mano desde el editor; es seguro
+ * ejecutarla de nuevo.
+ */
+function convertirFechasTexto() {
+  conCandado_(function () {
+    const hoja = hoja_('Movimientos');
+    const columna = encabezados_(hoja, 'Movimientos').indexOf('fecha') + 1;
+    const cantidad = hoja.getLastRow() - 1;
+    if (cantidad < 1) {
+      return;
+    }
+    const valores = hoja.getRange(2, columna, cantidad, 1).getValues();
+
+    let convertidas = 0;
+    let ilegibles = 0;
+    let inicio = -1;
+    let tramo = [];
+    function escribirTramo() {
+      if (tramo.length) {
+        hoja.getRange(inicio + 2, columna, tramo.length, 1)
+          .setNumberFormat(FORMATOS.fecha)
+          .setValues(tramo);
+      }
+      tramo = [];
+      inicio = -1;
+    }
+    valores.forEach(function (fila, i) {
+      const valor = fila[0];
+      const esTexto = valor !== '' && Object.prototype.toString.call(valor) !== '[object Date]';
+      const fecha = esTexto ? leerFecha_(valor) : null;
+      if (fecha) {
+        if (inicio < 0) {
+          inicio = i;
+        }
+        tramo.push([fecha]);
+        convertidas++;
+      } else {
+        if (esTexto) {
+          ilegibles++;
+        }
+        escribirTramo();
+      }
+    });
+    escribirTramo();
+    Logger.log('Fechas convertidas: ' + convertidas +
+      (ilegibles ? '. No se pudieron leer ' + ilegibles + ' (quedaron igual).' : '. Todas se pudieron leer.'));
+  });
+}
+
+/**
  * Borra las hojas vacías que Google crea por defecto ("Hoja 1" o "Sheet1"),
  * pero solo si no son parte de la estructura y no tienen ningún dato.
  */

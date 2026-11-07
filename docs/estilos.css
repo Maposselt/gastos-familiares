@@ -10,6 +10,9 @@
   --peligro: #b3261e;
   --alerta-roja: #fdecea;
   --alerta-amarilla: #fff6db;
+  --decision-ok: #e6f5ea;
+  --decision-revisar: #eceef1;
+  --decision-descartar: #fbe7e5;
   --familiar: #e6eefc;
   --personal: #eef6ea;
   --radio: 10px;
@@ -28,6 +31,9 @@
     --peligro: #ff8a80;
     --alerta-roja: #4a2422;
     --alerta-amarilla: #463b1c;
+    --decision-ok: #1f3a2a;
+    --decision-revisar: #2b3039;
+    --decision-descartar: #43211f;
     --familiar: #22304a;
     --personal: #253626;
   }
@@ -255,6 +261,9 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
   border-radius: var(--radio);
   padding: 8px 10px;
 }
+.fila-importacion[data-decision="ok"] { background: var(--decision-ok); }
+.fila-importacion[data-decision="porRevisar"] { background: var(--decision-revisar); }
+.fila-importacion[data-decision="descartar"] { background: var(--decision-descartar); }
 .fila-importacion.terminada { padding: 4px 10px; background: var(--fondo); }
 .fila-importacion.terminada .nota { margin: 0; }
 .fila-compacta input[type="text"], .fila-compacta select { margin-top: 0; padding: 6px 8px; }

@@ -471,9 +471,11 @@ function formularioGasto(opciones) {
   }
 
   // Botones "Copiar": detalles usados antes con esta glosa y filas parecidas de la importación.
+  // Máximo 2 botones en total: primero las filas de esta importación, luego los detalles de antes.
   let copiasExtra = [];
   function pintarCopias() {
     const deAntes = (sugerencia && sugerencia.detalles ? sugerencia.detalles : [])
+      .slice(0, Math.max(0, 2 - copiasExtra.length))
       .map((d) => typeof d === 'string' ? { texto: d } : d)
       .map((d) => {
         const c = categoriaPorId(d.categoria_id);
@@ -898,7 +900,7 @@ function mostrarDuplicados(alertas, acciones) {
 // nunca se sube completo. Solo viajan los gastos que el usuario guarda.
 // ---------------------------------------------------------------------------
 
-const MAXIMO_FILAS_IMPORTACION = 200;
+const MAXIMO_FILAS_IMPORTACION = 400;
 const PATRONES_COLUMNA = {
   fecha: /fecha/i,
   descripcion: /descrip|glosa|detalle|comercio|concepto/i,
@@ -1311,7 +1313,11 @@ function pintarRevision(items, duplicados, sugerencias, info) {
       textoOk: fila.alertas.length ? '✅ OK (guardar igual)' : '✅ OK',
       inicial: item,
       sugerenciaInicial: sugerencias[i],
-      alCambiarDecision: actualizarBarra,
+      // El color del recuadro muestra la decisión: verde OK, gris por revisar, rojo descartar.
+      alCambiarDecision: (decision) => {
+        fila.caja.dataset.decision = decision;
+        actualizarBarra();
+      },
       alCambiarClasificacion: () => actualizarCopias()
     });
     vaciar(fila.caja, el('div', { class: 'numero-importacion', text: (i + 1) + ' de ' + items.length }), fila.avisos, fila.formulario);
@@ -1357,6 +1363,7 @@ function pintarRevision(items, duplicados, sugerencias, info) {
       fila.clasificacion = clasificacionDe(fila);
     }
     fila.terminada = true;
+    delete fila.caja.dataset.decision;
     fila.caja.classList.add('terminada');
     vaciar(fila.caja, el('p', { class: 'nota', text: texto + ': ' + fechaVisible(fila.item.fecha) + ' · ' + fila.item.descripcion + ' · ' + pesos(fila.item.monto) }));
   }

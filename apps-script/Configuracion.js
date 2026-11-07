@@ -189,3 +189,73 @@ function eliminarHojasInicialesVacias_(planilla) {
     }
   });
 }
+
+/**
+ * Crea la pestaña "Resumen" para el dashboard: totales por mes, tipo y
+ * categoría de los gastos confirmados de los últimos 13 meses, SOLO
+ * familiares y personales del administrador (los personales de los demás
+ * quedan fuera). Se calcula sola con una fórmula; la app no la usa.
+ * Queda como primera pestaña para poder leerla sola desde Drive.
+ * Se ejecuta a mano una vez desde el editor. Si la pestaña ya existe, no hace nada.
+ */
+function crearResumenDashboard() {
+  const planilla = SpreadsheetApp.getActiveSpreadsheet();
+  if (planilla.getSheetByName('Resumen')) {
+    Logger.log('La pestaña Resumen ya existe: no se cambió nada.');
+    return;
+  }
+  const admin = leerTabla_('Usuarios').filter(function (u) {
+    return normalizar_(u.rol) === 'admin' && esSi_(u.activo);
+  })[0];
+  if (!admin) {
+    throw new Error('No encontré al administrador en la pestaña Usuarios.');
+  }
+
+  // Letras de las columnas de Movimientos, según sus encabezados.
+  const movimientos = hoja_('Movimientos');
+  const columnas = encabezados_(movimientos, 'Movimientos');
+  const letra = function (nombre) { return letraColumna_(columnas.indexOf(nombre) + 1); };
+  const fecha = letra('fecha');
+  const monto = letra('monto');
+  const usuario = letra('usuario_id');
+  const tipo = letra('tipo');
+  const categoria = letra('categoria_id');
+  const estado = letra('estado');
+  const ultima = letraColumna_(columnas.length);
+  const grupo = 'year(' + fecha + '), month(' + fecha + ')+1, ' + tipo + ', ' + categoria;
+  // Primer día del mes de hace 12 meses (13 meses contando el actual).
+  const desde = '"&YEAR(EDATE(TODAY(),-12))&"-"&TEXT(MONTH(EDATE(TODAY(),-12)),"00")&"-01';
+  const consulta = 'select ' + grupo + ', sum(' + monto + '), count(' + monto + ')' +
+    ' where ' + estado + " = 'Confirmado' and " + fecha + " >= date '" + desde + "'" +
+    ' and (' + tipo + " = 'Familiar' or (" + tipo + " = 'Personal' and " + usuario + " = '" + admin.id + "'))" +
+    ' group by ' + grupo +
+    ' label year(' + fecha + ") 'anio', month(" + fecha + ")+1 'mes', " + tipo + " 'tipo', " +
+    categoria + " 'categoria_id', sum(" + monto + ") 'total', count(" + monto + ") 'cantidad'";
+
+  const hoja = planilla.insertSheet('Resumen', 0);
+  hoja.getRange('A1').setFormula('=QUERY(Movimientos!A2:' + ultima + ', "' + consulta + '", 0)');
+  hoja.getRange('H1').setFormula('=QUERY(Categorias!A1:D, "select A, B, C, D where A is not null", 1)');
+  hoja.getRange('M1').setValue('total_control');
+  hoja.getRange('M2').setFormula('=SUM(E2:E)');
+  hoja.setFrozenRows(1);
+
+  // Aviso si hay fechas guardadas como texto: la fórmula no las cuenta.
+  const fechas = movimientos.getRange(2, columnas.indexOf('fecha') + 1, Math.max(1, movimientos.getLastRow() - 1), 1).getValues();
+  const comoTexto = fechas.filter(function (f) {
+    return f[0] !== '' && Object.prototype.toString.call(f[0]) !== '[object Date]';
+  }).length;
+  Logger.log('Pestaña Resumen creada.' + (comoTexto
+    ? ' Ojo: ' + comoTexto + ' fechas están como texto y no se cuentan en el resumen.'
+    : ' Todas las fechas se leen bien.'));
+}
+
+/** 1 → A, 14 → N, 27 → AA. */
+function letraColumna_(numero) {
+  let letras = '';
+  while (numero > 0) {
+    const resto = (numero - 1) % 26;
+    letras = String.fromCharCode(65 + resto) + letras;
+    numero = Math.floor((numero - 1) / 26);
+  }
+  return letras;
+}

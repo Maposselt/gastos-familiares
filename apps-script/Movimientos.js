@@ -6,7 +6,7 @@
 const TIPOS = ['Familiar', 'Personal'];
 const ORIGENES = ['manual', 'glosa', 'foto', 'excel'];
 const MESES_POR_DEFECTO = 12;
-const MAXIMO_REVISION = 200;
+const MAXIMO_REVISION = 400;
 const SEPARADOR_DETALLE = ' — ';
 
 /**

@@ -17,7 +17,6 @@ const URL_BACKEND = 'https://script.google.com/macros/s/AKfycbwvyxaaDEZ_cst7K3kg
 
 const estado = {
   token: null,
-  modoGet: false,
   pagadorNuevo: '',
   usuario: null,
   usuarios: [],
@@ -314,15 +313,10 @@ function abrirCambioClave() {
 // ---------------------------------------------------------------------------
 
 /**
- * Envía { token, accion, datos } al backend. Usa POST de texto simple (el
- * comprobante no viaja en la URL). Solo si POST falla en el primer pedido
- * (que no modifica nada) se cambia a GET con el parámetro "payload".
- * Las acciones con clave nunca usan GET: la clave no puede ir en una URL.
+ * Envía { token, accion, datos } al backend, siempre por POST de texto
+ * simple: el comprobante y la clave nunca viajan en la URL.
  */
-const ACCIONES_CON_CLAVE = ['entrar', 'cambiarClave'];
-
 async function llamar(accion, datos) {
-  const conClave = ACCIONES_CON_CLAVE.includes(accion);
   if (accion !== 'entrar' && !estado.token) {
     sesionVencida();
     throw new Error('Tu sesión expiró. Vuelve a entrar.');
@@ -331,35 +325,15 @@ async function llamar(accion, datos) {
     ? { accion: accion, datos: datos || {} }
     : { token: estado.token, accion: accion, datos: datos || {} });
   let respuesta;
-  if (!estado.modoGet) {
-    try {
-      const r = await fetch(URL_BACKEND, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: cuerpo
-      });
-      respuesta = await r.json();
-    } catch (error) {
-      if (accion !== 'sesion') {
-        throw new Error('No se pudo conectar. Revisa tu internet e intenta de nuevo.');
-      }
-      estado.modoGet = true;
-    }
-  }
-  if (estado.modoGet) {
-    if (conClave) {
-      throw new Error('No se pudo conectar de forma segura. Recarga la página e intenta de nuevo.');
-    }
-    // Por URL no caben fotos ni PDF.
-    if (cuerpo.length > 6000) {
-      throw new Error('Esta función no está disponible con tu conexión actual. Recarga la página e intenta de nuevo.');
-    }
-    try {
-      const r = await fetch(URL_BACKEND + '?payload=' + encodeURIComponent(cuerpo));
-      respuesta = await r.json();
-    } catch (error) {
-      throw new Error('No se pudo conectar. Revisa tu internet e intenta de nuevo.');
-    }
+  try {
+    const r = await fetch(URL_BACKEND, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: cuerpo
+    });
+    respuesta = await r.json();
+  } catch (error) {
+    throw new Error('No se pudo conectar. Revisa tu internet e intenta de nuevo.');
   }
   if (!respuesta.ok) {
     if (/sesi[oó]n/i.test(respuesta.error) && accion !== 'sesion' && accion !== 'salir') {

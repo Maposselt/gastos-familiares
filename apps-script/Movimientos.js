@@ -49,6 +49,7 @@ function publicarMovimiento_(m, repartos) {
     monto: Number(m.monto),
     descripcion: String(m.descripcion),
     usuario_id: String(m.usuario_id),
+    cargado_por: String(m.cargado_por || ''),
     tipo: String(m.tipo),
     categoria_id: String(m.categoria_id),
     rendir_trabajo: esSi_(m.rendir_trabajo),
@@ -122,6 +123,7 @@ function revisarDuplicados_(usuario, datos) {
 function guardarMovimiento_(usuario, datos) {
   const porRevisar = datos.porRevisar === true;
   const v = porRevisar ? validarDatosBasicos_(datos) : validarMovimiento_(datos);
+  const pagadoPor = pagadorDe_(usuario, datos.pagadoPor, porRevisar ? '' : v.tipo);
   return conCandado_(function () {
     const candidato = { fecha: v.fecha, monto: v.monto, glosa: normalizar_(v.glosa) };
     const alertas = buscarDuplicados_(usuario, candidato, huellasExistentes_());
@@ -129,7 +131,7 @@ function guardarMovimiento_(usuario, datos) {
       return { guardado: false, duplicados: alertas };
     }
 
-    const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0);
+    const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0, pagadoPor);
     agregarFilas_('Movimientos', [movimiento]);
     if (porRevisar) {
       return { guardado: true, id: movimiento.id, pendientes: [] };
@@ -145,14 +147,34 @@ function guardarMovimiento_(usuario, datos) {
   });
 }
 
+/**
+ * Quién pagó el gasto. Normalmente, quien lo carga. Solo el administrador
+ * puede cargar a nombre de otra persona activa, y solo gastos familiares ya
+ * confirmados (nunca personales ni "Por revisar").
+ */
+function pagadorDe_(usuario, pagadoPor, tipo) {
+  if (!pagadoPor || pagadoPor === usuario.id) {
+    return usuario.id;
+  }
+  exigirAdmin_(usuario);
+  if (!usuariosActivos_().some(function (u) { return u.id === pagadoPor; })) {
+    throw errorPublico_('Esa persona no está activa en la app.');
+  }
+  if (tipo !== 'Familiar') {
+    throw errorPublico_('A nombre de otra persona solo se cargan gastos familiares.');
+  }
+  return String(pagadoPor);
+}
+
 /** Fila nueva de Movimientos a partir de los datos ya validados. */
-function nuevoMovimiento_(usuario, v, porRevisar, conDuplicado) {
+function nuevoMovimiento_(usuario, v, porRevisar, conDuplicado, pagadoPor) {
   return {
     id: 'm-' + Utilities.getUuid(),
     fecha: v.fecha,
     monto: v.monto,
     descripcion: v.descripcion,
-    usuario_id: usuario.id,
+    usuario_id: pagadoPor || usuario.id,
+    cargado_por: usuario.id,
     tipo: porRevisar ? '' : v.tipo,
     categoria_id: porRevisar ? '' : v.categoria.id,
     rendir_trabajo: !porRevisar && v.rendir ? 'Sí' : 'No',
@@ -234,14 +256,17 @@ function guardarVarios_(usuario, datos) {
 
 /**
  * Corrige o confirma un gasto propio (por ejemplo, uno "Por revisar"), o lo
- * anula. Nunca se borra la fila: un gasto anulado queda con estado Anulado.
+ * anula. También sirve para un gasto familiar que uno cargó a nombre de otra
+ * persona, pero sin poder pasarlo a Personal.
+ * Nunca se borra la fila: un gasto anulado queda con estado Anulado.
  */
 function actualizarMovimiento_(usuario, datos) {
   return conCandado_(function () {
     const movimiento = leerTabla_('Movimientos').filter(function (m) { return m.id === datos.id; })[0];
-    if (!movimiento || movimiento.usuario_id !== usuario.id) {
+    if (!movimiento || !puedeEditar_(usuario, movimiento)) {
       throw errorPublico_('No encontré ese gasto, o no es tuyo.');
     }
+    const esDeOtro = movimiento.usuario_id !== usuario.id;
     const repartosAnteriores = leerTabla_('Repartos')
       .filter(function (r) { return r.movimiento_id === movimiento.id; })
       .map(function (r) { return r._fila; });
@@ -270,6 +295,9 @@ function actualizarMovimiento_(usuario, datos) {
         ? datos.rendir_trabajo === true : esSi_(movimiento.rendir_trabajo),
       origen: movimiento.origen
     });
+    if (esDeOtro && v.tipo !== 'Familiar') {
+      throw errorPublico_('Un gasto a nombre de otra persona solo puede ser familiar.');
+    }
 
     // La huella usa solo la glosa del banco: cambiar el detalle no la altera.
     const fechaAnterior = leerFecha_(movimiento.fecha);

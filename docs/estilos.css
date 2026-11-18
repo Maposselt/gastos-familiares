@@ -86,7 +86,7 @@ h3 { font-size: 1rem; margin: 0 0 12px; }
 label { display: block; margin-bottom: 12px; font-weight: 600; font-size: .9rem; }
 label.casilla { display: flex; align-items: center; gap: 8px; font-weight: 400; }
 
-input[type="text"], input[type="search"], input[type="date"], input[type="month"], input[type="number"], select {
+input[type="text"], input[type="password"], input[type="search"], input[type="date"], input[type="month"], input[type="number"], select {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -368,3 +368,6 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 
 /* Sugerencia de la IA */
 .sugerencia-ia { margin: -4px 0 12px; font-size: .9rem; color: var(--texto-suave); }
+
+/* Botón Personal desactivado (gasto a nombre de otra persona). */
+.selector-tipo button:disabled { cursor: not-allowed; }

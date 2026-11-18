@@ -3,22 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- Lista de sitios permitidos: solo esta página, Google (inicio de sesión) y el backend.
-       'unsafe-inline' solo en estilos: el botón de Google los necesita. El código sigue restringido. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://accounts.google.com/gsi/client; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; frame-src https://accounts.google.com/gsi/; connect-src https://script.google.com https://script.googleusercontent.com https://accounts.google.com/gsi/; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <!-- Lista de sitios permitidos: solo esta página y el backend (Apps Script). -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://script.google.com https://script.googleusercontent.com; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=12">
-  <script src="app.js?v=12" defer></script>
-  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <link rel="stylesheet" href="estilos.css?v=13">
+  <script src="app.js?v=13" defer></script>
 </head>
 <body>
   <header class="barra">
     <h1>Gastos Familiares</h1>
     <div id="sesion" class="sesion" hidden>
       <span id="nombre-usuario"></span>
+      <button type="button" id="boton-cambiar-clave" class="enlace">Cambiar clave</button>
       <button type="button" id="boton-salir" class="enlace">Salir</button>
     </div>
   </header>
@@ -26,9 +25,13 @@
   <main>
     <section id="pantalla-entrar" class="pantalla">
       <h2>Entrar</h2>
-      <p>Entra con tu cuenta de Google.</p>
-      <div id="boton-google" class="boton-google"></div>
-      <p id="mensaje-entrar" class="nota"></p>
+      <form id="form-entrar" class="tarjeta" novalidate>
+        <label>Usuario <input type="text" id="entrar-usuario" autocomplete="username" autocapitalize="words" maxlength="40" placeholder="Max o Barb" required></label>
+        <label>Clave <input type="password" id="entrar-clave" autocomplete="current-password" maxlength="100" required></label>
+        <button type="submit" id="boton-entrar" class="principal">Entrar</button>
+        <p class="nota">Este dispositivo queda recordado por 30 días. En un computador ajeno, toca "Salir" al terminar.</p>
+      </form>
+      <p id="mensaje-entrar" class="nota" role="status"></p>
     </section>
 
     <section id="pantalla-nuevo" class="pantalla" hidden>

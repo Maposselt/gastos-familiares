@@ -7,7 +7,10 @@ const ESTRUCTURA = {
   Movimientos: [
     'id', 'fecha', 'monto', 'descripcion', 'usuario_id', 'tipo', 'categoria_id',
     'rendir_trabajo', 'estado', 'origen', 'huella', 'duplicado_revisado',
-    'creado_en', 'modificado_en'
+    'creado_en', 'modificado_en',
+    // Quién lo registró. Puede ser distinto de usuario_id (quien pagó) cuando
+    // el administrador carga un gasto familiar a nombre de otra persona.
+    'cargado_por'
   ],
   Repartos: ['movimiento_id', 'usuario_id', 'porcentaje', 'monto'],
   Ingresos: ['id', 'usuario_id', 'anio', 'mes', 'monto', 'creado_en'],
@@ -40,6 +43,7 @@ const FORMATOS = {
   id: '@',
   movimiento_id: '@',
   usuario_id: '@',
+  cargado_por: '@',
   categoria_id: '@',
   usuario_100: '@',
   huella: '@',
@@ -79,6 +83,39 @@ function configurarPlanilla() {
   Logger.log(creadas.length
     ? 'Pestañas creadas: ' + creadas.join(', ')
     : 'No se creó nada: todas las pestañas ya existían.');
+}
+
+/**
+ * Agrega al final de cada pestaña las columnas nuevas que pide ESTRUCTURA
+ * (por ejemplo "cargado_por" en Movimientos). No mueve ni cambia las columnas
+ * ni los datos que ya existen. Se ejecuta a mano desde el editor; es seguro
+ * ejecutarla de nuevo.
+ */
+function actualizarEstructura() {
+  const planilla = SpreadsheetApp.getActiveSpreadsheet();
+  const agregadas = [];
+  Object.keys(ESTRUCTURA).forEach(function (nombre) {
+    const hoja = planilla.getSheetByName(nombre);
+    if (!hoja) {
+      if (crearPestanaSiNoExiste_(planilla, nombre, ESTRUCTURA[nombre])) {
+        agregadas.push('pestaña ' + nombre);
+      }
+      return;
+    }
+    const encabezados = hoja.getRange(1, 1, 1, hoja.getLastColumn()).getValues()[0].map(String);
+    ESTRUCTURA[nombre].filter(function (c) { return encabezados.indexOf(c) < 0; }).forEach(function (columna) {
+      const numero = hoja.getLastColumn() + 1;
+      if (numero > hoja.getMaxColumns()) {
+        hoja.insertColumnAfter(hoja.getMaxColumns());
+      }
+      hoja.getRange(1, numero).setValue(columna).setFontWeight('bold').setBackground('#e8eef7');
+      if (FORMATOS[columna] && hoja.getMaxRows() > 1) {
+        hoja.getRange(2, numero, hoja.getMaxRows() - 1, 1).setNumberFormat(FORMATOS[columna]);
+      }
+      agregadas.push(nombre + '.' + columna);
+    });
+  });
+  Logger.log(agregadas.length ? 'Agregado: ' + agregadas.join(', ') : 'No faltaba nada: la estructura ya estaba al día.');
 }
 
 /**

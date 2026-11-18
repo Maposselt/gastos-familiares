@@ -1,7 +1,8 @@
 /**
  * Puerta de entrada de la app web.
  *
- * La app envía un JSON con: { token, accion, datos }.
+ * La app envía un JSON con: { token, accion, datos }. La acción "entrar"
+ * (usuario y clave) es la única que no lleva token.
  *   - doPost: el JSON va en el cuerpo, como texto simple (evita el bloqueo CORS).
  *   - doGet:  alternativa, el JSON va en el parámetro "payload" de la URL.
  * La respuesta siempre es { ok: true, datos } o { ok: false, error }.
@@ -28,6 +29,8 @@ function acciones_() {
         inicioSaldos: inicioSaldos_()
       };
     },
+    salir: salir_,
+    cambiarClave: cambiarClave_,
     sugerir: sugerir_,
     sugerirVarios: sugerirVarios_,
     listarMovimientos: listarMovimientos_,
@@ -63,6 +66,19 @@ function atender_(texto) {
       throw errorPublico_('Pedido con formato inválido.');
     }
     revisarIntentosFallidos_();
+    const datos = pedido.datos && typeof pedido.datos === 'object' ? pedido.datos : {};
+
+    // Única acción sin sesión: entrar con usuario y clave.
+    if (pedido.accion === 'entrar') {
+      try {
+        respuesta = { ok: true, datos: entrar_(datos) };
+      } catch (e) {
+        registrarIntentoFallido_();
+        throw e;
+      }
+      return respuestaJson_(respuesta);
+    }
+
     let usuario;
     try {
       usuario = autenticar_(pedido.token);
@@ -76,15 +92,18 @@ function atender_(texto) {
     if (typeof pedido.accion !== 'string' || !Object.prototype.hasOwnProperty.call(acciones, pedido.accion)) {
       throw errorPublico_('Acción desconocida.');
     }
-    const datos = pedido.datos && typeof pedido.datos === 'object' ? pedido.datos : {};
     respuesta = { ok: true, datos: acciones[pedido.accion](usuario, datos) };
   } catch (error) {
-    // Al registro solo va el mensaje técnico: nunca el token ni el correo.
+    // Al registro solo va el mensaje técnico: nunca el comprobante ni la clave.
     if (!error.publico) {
       console.error(error && error.stack ? error.stack : String(error));
     }
     respuesta = { ok: false, error: error.publico ? error.message : 'Ocurrió un error. Intenta de nuevo.' };
   }
+  return respuestaJson_(respuesta);
+}
+
+function respuestaJson_(respuesta) {
   return ContentService.createTextOutput(JSON.stringify(respuesta))
     .setMimeType(ContentService.MimeType.JSON);
 }

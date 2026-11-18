@@ -1,22 +1,24 @@
 /**
  * App de gastos familiares (se publica en GitHub Pages).
  *
- * - Nada de los datos se guarda en el navegador: todo vive en memoria y se
- *   pide al backend, que decide qué puede ver cada uno.
+ * - Ningún gasto se guarda en el navegador: todo vive en memoria y se pide
+ *   al backend, que decide qué puede ver cada uno. Lo único que se guarda es
+ *   el comprobante de sesión, para recordar el dispositivo (nunca la clave).
  * - Lo que escriben los usuarios se muestra siempre como texto (textContent),
  *   nunca como HTML.
- * - Estos dos valores son públicos por naturaleza (no son claves).
+ * - La dirección del backend es pública por naturaleza (no es una clave).
  */
 'use strict';
 
 const SEPARADOR_DETALLE = ' — ';
-const CLIENT_ID ='1065565340039-h85i836u1mip2j9ohjtfcmc3njhgt5u6.apps.googleusercontent.com';
+const LLAVE_SESION = 'gastos-familiares-sesion';
+const LARGO_MINIMO_CLAVE = 6;
 const URL_BACKEND = 'https://script.google.com/macros/s/AKfycbwvyxaaDEZ_cst7K3kg7etnj4Mn-2jEB4Jh4Qrk79EVViBhNB55gyWflDIzEe65tP-O/exec';
 
 const estado = {
   token: null,
-  expira: 0,
   modoGet: false,
+  pagadorNuevo: '',
   usuario: null,
   usuarios: [],
   categorias: [],
@@ -167,36 +169,56 @@ function normalizarTexto(texto, sinNumeros) {
 }
 
 // ---------------------------------------------------------------------------
-// Inicio de sesión con Google
+// Inicio de sesión con usuario y clave
 // ---------------------------------------------------------------------------
 
-function iniciarGoogle() {
-  google.accounts.id.initialize({
-    client_id: CLIENT_ID,
-    callback: alEntrar,
-    auto_select: true,
-    cancel_on_tap_outside: false
-  });
-  google.accounts.id.renderButton($('boton-google'), {
-    theme: 'outline', size: 'large', text: 'signin_with', locale: 'es'
-  });
-  google.accounts.id.prompt();
-}
-
-/** Lee la hora de vencimiento del comprobante (no se verifica aquí: lo verifica el backend). */
-function leerVencimiento(token) {
+/** Comprobante de sesión guardado en este dispositivo (puede no estar disponible). */
+function leerSesionGuardada() {
   try {
-    const parte = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-    return JSON.parse(atob(parte)).exp * 1000;
+    return localStorage.getItem(LLAVE_SESION) || null;
   } catch (e) {
-    // Si no se puede leer, se asume la duración normal (1 hora); el backend igual lo verifica.
-    return Date.now() + 3600000;
+    return null;
   }
 }
 
-async function alEntrar(respuesta) {
-  estado.token = respuesta.credential;
-  estado.expira = leerVencimiento(respuesta.credential);
+function guardarSesion(token) {
+  estado.token = token;
+  try {
+    if (token) {
+      localStorage.setItem(LLAVE_SESION, token);
+    } else {
+      localStorage.removeItem(LLAVE_SESION);
+    }
+  } catch (e) {
+    // Sin almacenamiento (por ejemplo, navegación privada): la sesión dura hasta cerrar la pestaña.
+  }
+}
+
+/** Formulario de entrada: la clave viaja solo al backend y nunca se guarda en el navegador. */
+async function entrarConClave(evento) {
+  evento.preventDefault();
+  const usuario = $('entrar-usuario').value.trim();
+  const clave = $('entrar-clave').value;
+  if (!usuario || !clave) {
+    $('mensaje-entrar').textContent = 'Escribe tu usuario y tu clave.';
+    return;
+  }
+  const boton = $('boton-entrar');
+  boton.disabled = true;
+  $('mensaje-entrar').textContent = 'Entrando…';
+  try {
+    const r = await llamar('entrar', { usuario: usuario, clave: clave });
+    $('entrar-clave').value = '';
+    guardarSesion(r.token);
+    await alEntrar();
+  } catch (error) {
+    $('mensaje-entrar').textContent = error.message;
+  } finally {
+    boton.disabled = false;
+  }
+}
+
+async function alEntrar() {
   $('mensaje-entrar').textContent = 'Entrando…';
   try {
     const sesion = await llamar('sesion');
@@ -219,31 +241,72 @@ async function alEntrar(respuesta) {
     }
     mostrarPantalla(estado.pantalla);
   } catch (error) {
-    estado.token = null;
-    $('mensaje-entrar').textContent = error.message;
+    // Si la sesión ya no sirve se olvida; si fue un corte de internet se conserva para reintentar.
+    if (/sesi[oó]n/i.test(error.message)) {
+      guardarSesion(null);
+    }
+    mostrarSoloEntrar(error.message);
   }
 }
 
-/** El comprobante dura una hora. Al vencer se vuelve a pedir, sin perder la pantalla. */
+/** La sesión venció o se cerró en otro lado: se vuelve a pedir la clave. */
 function sesionVencida() {
-  estado.token = null;
+  guardarSesion(null);
   mostrarSoloEntrar('Tu sesión expiró. Vuelve a entrar.');
-  if (window.google && google.accounts) {
-    google.accounts.id.prompt();
-  }
 }
 
 function mostrarSoloEntrar(mensaje) {
   document.querySelectorAll('.pantalla').forEach((p) => { p.hidden = p.id !== 'pantalla-entrar'; });
   $('navegacion').hidden = true;
+  $('sesion').hidden = true;
   $('mensaje-entrar').textContent = mensaje || '';
 }
 
-function salir() {
-  if (window.google && google.accounts) {
-    google.accounts.id.disableAutoSelect();
+async function salir() {
+  try {
+    await llamar('salir');
+  } catch (e) {
+    // Aunque el backend no responda, en este dispositivo se olvida la sesión.
   }
+  guardarSesion(null);
   location.reload();
+}
+
+/** Cambiar la clave propia. Cierra la sesión en los demás dispositivos. */
+function abrirCambioClave() {
+  const dialogo = $('dialogo');
+  const campo = (etiqueta, autocompletar) => el('input', {
+    type: 'password', maxlength: '100', autocomplete: autocompletar, 'aria-label': etiqueta
+  });
+  const actual = campo('Clave actual', 'current-password');
+  const nueva = campo('Clave nueva', 'new-password');
+  const repetida = campo('Repite la clave nueva', 'new-password');
+  const error = el('p', { class: 'error-campo', role: 'alert' });
+  const boton = el('button', { type: 'button', class: 'principal', text: 'Cambiar clave' });
+  boton.addEventListener('click', () => {
+    const faltante = !actual.value ? 'Escribe tu clave actual.'
+      : nueva.value.length < LARGO_MINIMO_CLAVE ? 'La clave nueva debe tener al menos ' + LARGO_MINIMO_CLAVE + ' caracteres.'
+        : nueva.value !== repetida.value ? 'Las claves nuevas no coinciden.' : '';
+    error.textContent = faltante;
+    if (faltante) {
+      return;
+    }
+    intentar(boton, async () => {
+      await llamar('cambiarClave', { actual: actual.value, nueva: nueva.value });
+      dialogo.close();
+      avisar('Clave cambiada. Los otros dispositivos tendrán que entrar de nuevo.');
+    });
+  });
+  vaciar(dialogo,
+    el('h3', { text: 'Cambiar mi clave' }),
+    el('label', {}, 'Clave actual', actual),
+    el('label', {}, 'Clave nueva (mínimo ' + LARGO_MINIMO_CLAVE + ' caracteres)', nueva),
+    el('label', {}, 'Repite la clave nueva', repetida),
+    el('p', { class: 'nota', text: 'Evita palabras comunes: mezcla letras y números.' }),
+    error,
+    el('div', { class: 'acciones' }, boton,
+      el('button', { type: 'button', text: 'Cancelar', onclick: () => dialogo.close() })));
+  dialogo.showModal();
 }
 
 // ---------------------------------------------------------------------------
@@ -254,13 +317,19 @@ function salir() {
  * Envía { token, accion, datos } al backend. Usa POST de texto simple (el
  * comprobante no viaja en la URL). Solo si POST falla en el primer pedido
  * (que no modifica nada) se cambia a GET con el parámetro "payload".
+ * Las acciones con clave nunca usan GET: la clave no puede ir en una URL.
  */
+const ACCIONES_CON_CLAVE = ['entrar', 'cambiarClave'];
+
 async function llamar(accion, datos) {
-  if (!estado.token || Date.now() > estado.expira - 30000) {
+  const conClave = ACCIONES_CON_CLAVE.includes(accion);
+  if (accion !== 'entrar' && !estado.token) {
     sesionVencida();
     throw new Error('Tu sesión expiró. Vuelve a entrar.');
   }
-  const cuerpo = JSON.stringify({ token: estado.token, accion: accion, datos: datos || {} });
+  const cuerpo = JSON.stringify(accion === 'entrar'
+    ? { accion: accion, datos: datos || {} }
+    : { token: estado.token, accion: accion, datos: datos || {} });
   let respuesta;
   if (!estado.modoGet) {
     try {
@@ -278,6 +347,9 @@ async function llamar(accion, datos) {
     }
   }
   if (estado.modoGet) {
+    if (conClave) {
+      throw new Error('No se pudo conectar de forma segura. Recarga la página e intenta de nuevo.');
+    }
     // Por URL no caben fotos ni PDF.
     if (cuerpo.length > 6000) {
       throw new Error('Esta función no está disponible con tu conexión actual. Recarga la página e intenta de nuevo.');
@@ -290,7 +362,7 @@ async function llamar(accion, datos) {
     }
   }
   if (!respuesta.ok) {
-    if (/sesi[oó]n/i.test(respuesta.error) && accion !== 'sesion') {
+    if (/sesi[oó]n/i.test(respuesta.error) && accion !== 'sesion' && accion !== 'salir') {
       sesionVencida();
     }
     throw new Error(respuesta.error);
@@ -377,6 +449,37 @@ function formularioGasto(opciones) {
   const error = el('p', { class: 'error-campo', role: 'alert' });
   const boton = el('button', { type: 'button', class: 'principal', text: opciones.textoBoton || 'Guardar' });
 
+  // "¿Quién pagó?": solo el administrador, solo al registrar un gasto nuevo.
+  // A nombre de otra persona solo se cargan gastos familiares confirmados.
+  let pagador = null;
+  const notaPagador = el('p', { class: 'nota' });
+  if (opciones.conPagador && estado.usuario.esAdmin && estado.usuarios.length > 1) {
+    pagador = el('select', { 'aria-label': '¿Quién pagó?' },
+      estado.usuarios.map((u) => el('option', { value: u.id, text: u.id === estado.usuario.id ? 'Yo (' + u.nombre + ')' : u.nombre })));
+    pagador.value = estado.usuarios.some((u) => u.id === estado.pagadorNuevo) ? estado.pagadorNuevo : estado.usuario.id;
+    pagador.addEventListener('change', () => {
+      estado.pagadorNuevo = pagador.value;
+      aplicarPagador();
+    });
+  }
+  function esDeOtro() {
+    return !!pagador && pagador.value !== estado.usuario.id;
+  }
+  function aplicarPagador() {
+    const soloFamiliar = opciones.soloFamiliar || esDeOtro();
+    botonPersonal.disabled = soloFamiliar;
+    if (botonPendiente) {
+      botonPendiente.hidden = esDeOtro();
+    }
+    // REGLA: el tipo se elige a mano. Si estaba en Personal, queda en blanco para elegirlo de nuevo.
+    if (soloFamiliar && tipo === 'Personal') {
+      elegirTipo('');
+    }
+    notaPagador.textContent = esDeOtro()
+      ? 'Se guardará como pagado por ' + nombreUsuario(pagador.value) + '. A nombre de otra persona solo se cargan gastos familiares.'
+      : opciones.soloFamiliar ? 'Este gasto está a nombre de ' + nombreUsuario(inicial.usuario_id) + ': solo puede ser familiar.' : '';
+  }
+
   function pintarCategorias(categoriaElegida) {
     const grupos = new Map();
     estado.categorias
@@ -453,19 +556,20 @@ function formularioGasto(opciones) {
   /**
    * Copia a ESTE gasto el detalle, el tipo y la categoría de otro (uno de
    * antes o una fila de la misma importación). Es un toque del usuario sobre
-   * este gasto: no marca OK ni toca ningún otro gasto.
+   * este gasto: en la importación lo deja en OK si quedó completo, y nunca
+   * toca ningún otro gasto.
    */
   function aplicarCopia(copia) {
     if (copia.detalle) {
       detalle.value = copia.detalle;
     }
     const c = categoriaPorId(copia.categoria_id);
-    if (copia.tipo && c && c.activa && c.tipo === copia.tipo) {
+    if (copia.tipo && c && c.activa && c.tipo === copia.tipo && !(copia.tipo === 'Personal' && botonPersonal.disabled)) {
       elegirTipo(copia.tipo, copia.categoria_id);
       categoriaManual = true;
     }
-    if (decision === 'ok') {
-      marcarDecision('');
+    if (opciones.conDecision) {
+      marcarDecision(faltanDatosCompletos(leerDatos()) ? '' : 'ok');
     }
     error.textContent = '';
   }
@@ -606,7 +710,8 @@ function formularioGasto(opciones) {
       detalle: detalle.value.trim(),
       tipo: tipo,
       categoria_id: categoria.value,
-      rendir_trabajo: tipo === 'Personal' && rendir.checked
+      rendir_trabajo: tipo === 'Personal' && rendir.checked,
+      pagadoPor: pagador ? pagador.value : undefined
     };
   }
 
@@ -675,6 +780,8 @@ function formularioGasto(opciones) {
     });
   }
 
+  aplicarPagador();
+
   const selectorTipo = el('div', { class: 'selector-tipo', role: 'group', 'aria-label': 'Tipo' }, botonFamiliar, botonPersonal);
   const notaTipo = opciones.sugerenciaTipo
     ? el('p', { class: 'nota', text: 'Según tu marca antigua: ' + opciones.sugerenciaTipo + '. Confírmalo eligiéndolo.' })
@@ -711,6 +818,7 @@ function formularioGasto(opciones) {
     return nodo;
   }
   return el('div', { class: 'tarjeta' },
+    pagador ? el('label', {}, '¿Quién pagó?', pagador) : null,
     el('label', {}, 'Fecha', fecha),
     el('label', {}, 'Monto', monto),
     el('label', {}, 'Glosa', descripcion),
@@ -721,6 +829,7 @@ function formularioGasto(opciones) {
     el('div', { class: 'etiqueta-campo', text: 'Tipo' }),
     notaTipo,
     selectorTipo,
+    notaPagador,
     el('label', {}, 'Categoría', categoria),
     pistaCategoria,
     filaRendir,
@@ -850,6 +959,7 @@ function pintarNuevo(fechaAnterior, deBoleta) {
   vaciar($('contenedor-nuevo'), formularioGasto({
     inicial: inicial,
     buscarAlIniciar: !!deBoleta,
+    conPagador: true,
     textoBoton: 'Guardar gasto',
     alGuardar: (datos) => guardarNuevo(datos, false),
     alDejarPendiente: (datos) => guardarNuevo(Object.assign({}, datos, { porRevisar: true }), false)
@@ -1550,8 +1660,14 @@ function tablaGastos(movimientos, conAnio) {
     el('tbody', {}, movimientos.map((m) => filaGasto(m, conAnio)))));
 }
 
+/** Igual que en el backend: el dueño, o quien cargó un gasto familiar a nombre de otra persona. */
+function puedoEditar(m) {
+  return m.usuario_id === estado.usuario.id ||
+    (m.cargado_por === estado.usuario.id && m.tipo === 'Familiar');
+}
+
 function filaGasto(m, conAnio) {
-  const propio = m.usuario_id === estado.usuario.id;
+  const propio = puedoEditar(m);
   const clases = [m.tipo === 'Familiar' ? 'familiar' : '', m.estado === 'Anulado' ? 'anulado' : '', propio ? 'editable' : '']
     .filter(Boolean).join(' ');
   const fila = el('tr', { class: clases },
@@ -1561,7 +1677,8 @@ function filaGasto(m, conAnio) {
       m.estado !== 'Confirmado' ? el('span', { class: 'etiqueta', text: m.estado }) : null,
       m.rendir_trabajo ? el('span', { class: 'etiqueta', text: 'Rendir' }) : null),
     el('td', { text: m.categoria_id ? etiquetaCategoria(m.categoria_id) : '—' }),
-    el('td', { text: nombreUsuario(m.usuario_id) }),
+    el('td', { text: nombreUsuario(m.usuario_id) +
+      (m.cargado_por && m.cargado_por !== m.usuario_id ? ' (cargó ' + nombreUsuario(m.cargado_por) + ')' : '') }),
     el('td', { class: 'celda-monto', text: pesos(m.monto) }));
   if (propio) {
     fila.tabIndex = 0;
@@ -1682,6 +1799,7 @@ function abrirEdicion(m) {
     formularioGasto({
       inicial: porRevisar ? Object.assign({}, m, { tipo: '', categoria_id: '' }) : m,
       sugerenciaTipo: porRevisar ? m.tipo : '',
+      soloFamiliar: m.usuario_id !== estado.usuario.id,
       idMovimiento: m.id,
       textoBoton: anulado ? 'Restaurar' : porRevisar ? 'Confirmar' : 'Guardar cambios',
       botonesExtra: extras,
@@ -2107,10 +2225,14 @@ function iniciar() {
     }
   });
 
-  if (window.google && google.accounts && google.accounts.id) {
-    iniciarGoogle();
-  } else {
-    window.onGoogleLibraryLoad = iniciarGoogle;
+  $('form-entrar').addEventListener('submit', entrarConClave);
+  $('boton-cambiar-clave').addEventListener('click', abrirCambioClave);
+
+  // Si este dispositivo ya tenía una sesión abierta, se entra directo.
+  const guardada = leerSesionGuardada();
+  if (guardada) {
+    estado.token = guardada;
+    alEntrar();
   }
 }
 

@@ -13,58 +13,26 @@ function diagnosticar() {
   }
 
   const propiedades = PropertiesService.getScriptProperties().getProperties();
-  const clavesUsuario = Object.keys(propiedades).filter(function (k) { return k.indexOf('USUARIO_') === 0; });
-
-  paso('CLIENT_ID', function () {
-    const id = String(propiedades.CLIENT_ID || '');
-    if (!id) {
-      throw new Error('falta la propiedad CLIENT_ID');
-    }
-    if (id !== id.trim()) {
-      throw new Error('tiene espacios al inicio o al final');
-    }
-    if (!/\.apps\.googleusercontent\.com$/.test(id)) {
-      throw new Error('no termina en .apps.googleusercontent.com');
-    }
-    return 'existe y tiene el formato correcto';
-  });
-
-  paso('Correos autorizados', function () {
-    if (!clavesUsuario.length) {
-      throw new Error('no hay propiedades USUARIO_…');
-    }
-    return clavesUsuario.map(function (k) {
-      const valor = String(propiedades[k]);
-      const problemas = [];
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(valor.trim())) {
-        problemas.push('no parece un correo');
-      }
-      if (valor !== valor.trim()) {
-        problemas.push('tiene espacios de más');
-      }
-      return k + (problemas.length ? ' (' + problemas.join(', ') + ')' : ' (formato OK)');
-    }).join('; ');
-  });
 
   Object.keys(ESTRUCTURA).forEach(function (nombre) {
     paso('Pestaña ' + nombre, function () { return leerTabla_(nombre).length + ' filas'; });
   });
 
-  paso('Usuarios', function () {
-    const usuarios = leerTabla_('Usuarios');
-    return clavesUsuario.map(function (k) {
-      const id = k.slice('USUARIO_'.length);
-      const u = usuarios.filter(function (x) { return x.id === id; })[0];
-      if (!u) {
-        return id + ' NO está en la pestaña Usuarios';
-      }
-      return id + ' → rol "' + u.rol + '", activo "' + u.activo + '"' + (esSi_(u.activo) ? '' : ' (NO activo)');
+  // Solo dice si cada usuario tiene clave; nunca muestra la clave.
+  paso('Usuarios y claves', function () {
+    return leerTabla_('Usuarios').map(function (u) {
+      const id = String(u.id);
+      const inicial = String(propiedades['CLAVE_INICIAL_' + id] || '');
+      const estadoClave = inicial
+        ? (inicial.length < LARGO_MINIMO_CLAVE ? 'clave inicial MUY CORTA (mínimo ' + LARGO_MINIMO_CLAVE + ')' : 'clave inicial lista para el primer ingreso')
+        : propiedades['CLAVE_' + id] ? 'clave cifrada guardada' : 'SIN CLAVE (crea CLAVE_INICIAL_' + id + ')';
+      return id + ' "' + u.nombre_visible + '" → rol "' + u.rol + '", ' +
+        (esSi_(u.activo) ? 'activo' : 'NO activo') + ', ' + estadoClave;
     }).join('; ');
   });
 
-  paso('Conexión con Google', function () {
-    const r = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=prueba', { muteHttpExceptions: true });
-    return 'OK (respuesta ' + r.getResponseCode() + ', se espera 400 con un comprobante de prueba)';
+  paso('Sesiones abiertas', function () {
+    return Object.keys(propiedades).filter(function (k) { return k.indexOf('SESION_') === 0; }).length + ' dispositivos';
   });
 
   paso('Caché y candado', function () {

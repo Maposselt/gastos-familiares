@@ -152,12 +152,12 @@ function guardarMovimiento_(usuario, datos) {
  * puede cargar a nombre de otra persona activa, y solo gastos familiares ya
  * confirmados (nunca personales ni "Por revisar").
  */
-function pagadorDe_(usuario, pagadoPor, tipo) {
+function pagadorDe_(usuario, pagadoPor, tipo, usuarios) {
   if (!pagadoPor || pagadoPor === usuario.id) {
     return usuario.id;
   }
   exigirAdmin_(usuario);
-  if (!usuariosActivos_().some(function (u) { return u.id === pagadoPor; })) {
+  if (!(usuarios || usuariosActivos_()).some(function (u) { return u.id === pagadoPor; })) {
     throw errorPublico_('Esa persona no está activa en la app.');
   }
   if (tipo !== 'Familiar') {
@@ -212,12 +212,13 @@ function guardarVarios_(usuario, datos) {
       try {
         const porRevisar = d.porRevisar === true;
         const v = porRevisar ? validarDatosBasicos_(d) : validarMovimiento_(d, categoriasPorId);
+        const pagadoPor = pagadorDe_(usuario, d.pagadoPor, porRevisar ? '' : v.tipo, contexto.usuarios);
         const candidato = { fecha: v.fecha, monto: v.monto, glosa: normalizar_(v.glosa) };
         const alertas = buscarDuplicados_(usuario, candidato, existentes);
         if (alertas.length && d.confirmarDuplicado !== true) {
           return { guardado: false, duplicados: alertas };
         }
-        const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0);
+        const movimiento = nuevoMovimiento_(usuario, v, porRevisar, alertas.length > 0, pagadoPor);
         movimientos.push(movimiento);
         // Así también se detectan duplicados entre los gastos de esta misma carga.
         existentes.push({ movimiento: movimiento, fecha: v.fecha, monto: v.monto, glosa: candidato.glosa });
@@ -266,7 +267,6 @@ function actualizarMovimiento_(usuario, datos) {
     if (!movimiento || !puedeEditar_(usuario, movimiento)) {
       throw errorPublico_('No encontré ese gasto, o no es tuyo.');
     }
-    const esDeOtro = movimiento.usuario_id !== usuario.id;
     const repartosAnteriores = leerTabla_('Repartos')
       .filter(function (r) { return r.movimiento_id === movimiento.id; })
       .map(function (r) { return r._fila; });
@@ -295,8 +295,19 @@ function actualizarMovimiento_(usuario, datos) {
         ? datos.rendir_trabajo === true : esSi_(movimiento.rendir_trabajo),
       origen: movimiento.origen
     });
-    if (esDeOtro && v.tipo !== 'Familiar') {
+    // El administrador puede cambiar quién pagó un gasto familiar que él cargó
+    // (por ejemplo, uno de Barb que quedó a su nombre). Solo cambia el balance, no el reparto.
+    let pagador = String(movimiento.usuario_id);
+    if (typeof datos.pagadoPor === 'string' && datos.pagadoPor !== pagador) {
+      pagador = pagadorDe_(usuario, datos.pagadoPor, v.tipo);
+    }
+    if (pagador !== usuario.id && v.tipo !== 'Familiar') {
       throw errorPublico_('Un gasto a nombre de otra persona solo puede ser familiar.');
+    }
+    if (pagador !== movimiento.usuario_id) {
+      // Quien hace el cambio queda como quien lo cargó, para poder seguir corrigiéndolo.
+      movimiento.cargado_por = movimiento.cargado_por || usuario.id;
+      movimiento.usuario_id = pagador;
     }
 
     // La huella usa solo la glosa del banco: cambiar el detalle no la altera.

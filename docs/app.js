@@ -423,16 +423,22 @@ function formularioGasto(opciones) {
   const error = el('p', { class: 'error-campo', role: 'alert' });
   const boton = el('button', { type: 'button', class: 'principal', text: opciones.textoBoton || 'Guardar' });
 
-  // "¿Quién pagó?": solo el administrador, solo al registrar un gasto nuevo.
+  // "¿Quién pagó?": solo el administrador, al registrar un gasto nuevo
+  // (conPagador) o al corregir uno familiar que él cargó (pagadorInicial).
   // A nombre de otra persona solo se cargan gastos familiares confirmados.
   let pagador = null;
+  // En la importación, la cartola entera puede ser de otra persona (lo decide la pantalla de importación).
+  let cartolaDeOtro = false;
   const notaPagador = el('p', { class: 'nota' });
-  if (opciones.conPagador && estado.usuario.esAdmin && estado.usuarios.length > 1) {
+  if ((opciones.conPagador || opciones.pagadorInicial) && estado.usuario.esAdmin && estado.usuarios.length > 1) {
     pagador = el('select', { 'aria-label': '¿Quién pagó?' },
       estado.usuarios.map((u) => el('option', { value: u.id, text: u.id === estado.usuario.id ? 'Yo (' + u.nombre + ')' : u.nombre })));
-    pagador.value = estado.usuarios.some((u) => u.id === estado.pagadorNuevo) ? estado.pagadorNuevo : estado.usuario.id;
+    const elegido = opciones.pagadorInicial || estado.pagadorNuevo;
+    pagador.value = estado.usuarios.some((u) => u.id === elegido) ? elegido : estado.usuario.id;
     pagador.addEventListener('change', () => {
-      estado.pagadorNuevo = pagador.value;
+      if (opciones.conPagador) {
+        estado.pagadorNuevo = pagador.value;
+      }
       aplicarPagador();
     });
   }
@@ -440,10 +446,16 @@ function formularioGasto(opciones) {
     return !!pagador && pagador.value !== estado.usuario.id;
   }
   function aplicarPagador() {
-    const soloFamiliar = opciones.soloFamiliar || esDeOtro();
+    const soloFamiliar = opciones.soloFamiliar || esDeOtro() || cartolaDeOtro;
     botonPersonal.disabled = soloFamiliar;
     if (botonPendiente) {
       botonPendiente.hidden = esDeOtro();
+    }
+    if (botonesDecision.porRevisar) {
+      botonesDecision.porRevisar.disabled = cartolaDeOtro;
+      if (cartolaDeOtro && decision === 'porRevisar') {
+        marcarDecision('');
+      }
     }
     // REGLA: el tipo se elige a mano. Si estaba en Personal, queda en blanco para elegirlo de nuevo.
     if (soloFamiliar && tipo === 'Personal') {
@@ -550,10 +562,11 @@ function formularioGasto(opciones) {
 
   // Botones "Copiar": detalles usados antes con esta glosa y filas parecidas de la importación.
   // Máximo 2 botones en total: primero las filas de esta importación, luego los detalles de antes.
+  // Una misma clasificación (tipo, categoría y detalle) se muestra una sola vez.
   let copiasExtra = [];
   function pintarCopias() {
+    const yaMostradas = new Set(copiasExtra.map(claveCopia));
     const deAntes = (sugerencia && sugerencia.detalles ? sugerencia.detalles : [])
-      .slice(0, Math.max(0, 2 - copiasExtra.length))
       .map((d) => typeof d === 'string' ? { texto: d } : d)
       .map((d) => {
         const c = categoriaPorId(d.categoria_id);
@@ -562,7 +575,16 @@ function formularioGasto(opciones) {
           etiqueta: d.texto + (conCategoria ? ' · ' + d.tipo + ' / ' + etiquetaCategoria(d.categoria_id) : ''),
           detalle: d.texto, tipo: conCategoria ? d.tipo : '', categoria_id: conCategoria ? d.categoria_id : ''
         };
-      });
+      })
+      .filter((copia) => {
+        const clave = claveCopia(copia);
+        if (yaMostradas.has(clave)) {
+          return false;
+        }
+        yaMostradas.add(clave);
+        return true;
+      })
+      .slice(0, Math.max(0, 2 - copiasExtra.length));
     const botones = (lista) => lista.map((copia) => el('button', {
       type: 'button', class: 'copia', text: copia.etiqueta, onclick: () => aplicarCopia(copia)
     }));
@@ -784,6 +806,11 @@ function formularioGasto(opciones) {
     };
     nodo.mostrarError = (texto) => { error.textContent = texto; };
     nodo.reiniciarDecision = () => marcarDecision('');
+    // Cartola de otra persona: solo Familiar, y solo OK o Descartar.
+    nodo.ponerCartolaDeOtro = (valor) => {
+      cartolaDeOtro = valor;
+      aplicarPagador();
+    };
     // La importación ofrece copiar la clasificación de otras filas con la misma glosa.
     nodo.ponerCopias = (lista) => {
       copiasExtra = lista;
@@ -809,6 +836,11 @@ function formularioGasto(opciones) {
     filaRendir,
     error,
     acciones);
+}
+
+/** Identifica una clasificación para copiar: dos con la misma clave son iguales. */
+function claveCopia(copia) {
+  return (copia.tipo || '') + '|' + (copia.categoria_id || '') + '|' + normalizarTexto(copia.detalle);
 }
 
 /** Campo de fecha DD/MM/AAAA: agrega las barras mientras se escribe. */
@@ -1377,10 +1409,42 @@ function textoAlerta(a) {
  * de asignar el tipo o la decisión a varios a la vez. El botón final solo
  * ejecuta lo que ya se decidió en cada fila.
  */
+/** "la fila 3", "las filas 1 y 3", "las filas 1, 3, 5 y 2 más". */
+function textoFilas(numeros) {
+  if (numeros.length === 1) {
+    return 'la fila ' + numeros[0];
+  }
+  const vistos = numeros.slice(0, 3);
+  const resto = numeros.length - vistos.length;
+  return 'las filas ' + (resto
+    ? vistos.join(', ') + ' y ' + resto + ' más'
+    : vistos.slice(0, -1).join(', ') + ' y ' + vistos[vistos.length - 1]);
+}
+
 function pintarRevision(items, duplicados, sugerencias, info) {
   const contador = el('p', { class: 'contador' });
   const botonGuardar = el('button', { type: 'button', class: 'principal', text: 'Guardar decisiones' });
   const resumenDecisiones = el('span', { class: 'resumen-decisiones' });
+
+  // Solo el administrador: la cartola puede ser de otra persona. Entonces cada
+  // fila queda pagada por ella, solo como Familiar y solo con OK o Descartar.
+  let pagadorCartola = estado.usuario.id;
+  const notaCartola = el('p', { class: 'nota' });
+  let selectorCartola = null;
+  if (estado.usuario.esAdmin && estado.usuarios.length > 1) {
+    selectorCartola = el('select', { 'aria-label': '¿De quién es esta cartola?' },
+      estado.usuarios.map((u) => el('option', { value: u.id, text: u.id === estado.usuario.id ? 'Mía (' + u.nombre + ')' : u.nombre })));
+    selectorCartola.value = pagadorCartola;
+    selectorCartola.addEventListener('change', () => {
+      pagadorCartola = selectorCartola.value;
+      const deOtro = pagadorCartola !== estado.usuario.id;
+      filas.filter((f) => !f.terminada).forEach((f) => f.formulario.ponerCartolaDeOtro(deOtro));
+      notaCartola.textContent = deOtro
+        ? 'Los gastos quedarán pagados por ' + nombreUsuario(pagadorCartola) + '. Solo se pueden marcar como Familiar, con OK o Descartar.'
+        : '';
+      actualizarBarra();
+    });
+  }
 
   let filas = [];
   filas = items.map((item, i) => {
@@ -1429,15 +1493,25 @@ function pintarRevision(items, duplicados, sugerencias, info) {
     const clasificadas = filas.map((f) => ({ fila: f, c: clasificacionDe(f) })).filter((x) => x.c && x.fila.glosa);
     filas.filter((f) => !f.terminada).forEach((f) => {
       const propia = clasificacionDe(f);
-      const copias = clasificadas
+      // Filas con exactamente la misma clasificación se agrupan en un solo botón ("las filas 1 y 3").
+      const grupos = new Map();
+      clasificadas
         .filter((x) => x.fila !== f && x.fila.glosa === f.glosa)
         .filter((x) => !propia || propia.tipo !== x.c.tipo || propia.categoria_id !== x.c.categoria_id ||
           (x.c.detalle && x.c.detalle !== propia.detalle))
+        .forEach((x) => {
+          const clave = claveCopia(x.c);
+          if (!grupos.has(clave)) {
+            grupos.set(clave, { c: x.c, numeros: [] });
+          }
+          grupos.get(clave).numeros.push(x.fila.numero);
+        });
+      const copias = Array.from(grupos.values())
         .slice(0, 2)
-        .map((x) => Object.assign({
-          etiqueta: 'la fila ' + x.fila.numero + ' · ' + x.c.tipo + ' / ' + etiquetaCategoria(x.c.categoria_id) +
-            (x.c.detalle ? ' · ' + x.c.detalle : '')
-        }, x.c));
+        .map((g) => Object.assign({
+          etiqueta: textoFilas(g.numeros) + ' · ' + g.c.tipo + ' / ' + etiquetaCategoria(g.c.categoria_id) +
+            (g.c.detalle ? ' · ' + g.c.detalle : '')
+        }, g.c));
       f.formulario.ponerCopias(copias);
     });
   }
@@ -1479,7 +1553,8 @@ function pintarRevision(items, duplicados, sugerencias, info) {
         return;
       }
       aEnviar.push({ fila: f, datos: Object.assign({}, d.datos, {
-        origen: 'excel', porRevisar: d.decision === 'porRevisar', confirmarDuplicado: f.alertas.length > 0
+        origen: 'excel', porRevisar: d.decision === 'porRevisar', confirmarDuplicado: f.alertas.length > 0,
+        pagadoPor: pagadorCartola !== estado.usuario.id ? pagadorCartola : undefined
       }) });
     });
     if (aEnviar.length) {
@@ -1523,6 +1598,8 @@ function pintarRevision(items, duplicados, sugerencias, info) {
     el('div', { class: 'cabecera-importacion' },
       el('h3', { text: '📄 ' + info.nombreArchivo }),
       contador,
+      selectorCartola ? el('label', {}, '¿De quién es esta cartola? ', selectorCartola) : null,
+      notaCartola,
       el('p', { class: 'nota', text: 'En cada gasto elige Familiar o Personal, revisa la categoría y marca OK, Por revisar o Descartar. Al final toca "Guardar decisiones".' }),
       avisos.map((a) => el('p', { class: 'nota', text: a })),
       el('button', { type: 'button', text: 'Cerrar importación', onclick: () => {
@@ -1752,6 +1829,8 @@ function abrirEdicion(m) {
   const dialogo = $('dialogo');
   const porRevisar = m.estado === 'Por revisar';
   const anulado = m.estado === 'Anulado';
+  const puedeCambiarPagador = estado.usuario.esAdmin && m.tipo === 'Familiar' && !porRevisar &&
+    (m.usuario_id === estado.usuario.id || m.cargado_por === estado.usuario.id);
   const extras = [];
   if (!anulado) {
     const botonAnular = el('button', { type: 'button', class: 'peligro', text: 'Anular gasto' });
@@ -1773,7 +1852,9 @@ function abrirEdicion(m) {
     formularioGasto({
       inicial: porRevisar ? Object.assign({}, m, { tipo: '', categoria_id: '' }) : m,
       sugerenciaTipo: porRevisar ? m.tipo : '',
-      soloFamiliar: m.usuario_id !== estado.usuario.id,
+      // El administrador puede corregir quién pagó un gasto familiar que él cargó.
+      pagadorInicial: puedeCambiarPagador ? m.usuario_id : undefined,
+      soloFamiliar: !puedeCambiarPagador && m.usuario_id !== estado.usuario.id,
       idMovimiento: m.id,
       textoBoton: anulado ? 'Restaurar' : porRevisar ? 'Confirmar' : 'Guardar cambios',
       botonesExtra: extras,

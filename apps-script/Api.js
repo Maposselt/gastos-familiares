@@ -49,7 +49,8 @@ function acciones_() {
     usoIA: usoIA_,
     sugerirConIA: sugerirConIA_,
     leerBoleta: leerBoleta_,
-    leerCartolaPdf: leerCartolaPdf_
+    leerCartolaPdf: leerCartolaPdf_,
+    leerCartolaImagen: leerCartolaImagen_
   };
 }
 

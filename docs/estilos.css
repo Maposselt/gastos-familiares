@@ -305,6 +305,33 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
   .fc-datos { grid-template-columns: 1fr 1fr; }
   .fc-datos input:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
   .fc-clasificar { grid-template-columns: 1fr; }
+
+  /* Celular: más espacio para el gasto que se está clasificando. */
+  .barra { position: static; padding: 8px 12px; }
+  main { padding: 10px 10px 96px; }
+  body.importando .navegacion { display: none; }
+  body.importando main { padding-bottom: 16px; }
+  body.importando #pantalla-nuevo > h2,
+  body.importando #pantalla-nuevo > .filtros { display: none; }
+  body.importando .barra-decisiones {
+    bottom: 0;
+    flex-wrap: nowrap;
+    margin: 8px -10px 0;
+    padding: 6px 10px calc(6px + env(safe-area-inset-bottom));
+    border-radius: 0;
+    border-width: 1px 0 0;
+  }
+  body.importando .resumen-decisiones { font-size: .76rem; font-weight: 500; }
+  body.importando .barra-decisiones button { flex: none; padding: 8px 12px; }
+  .lista-importacion > li { margin-bottom: 6px; }
+  .fila-importacion { padding: 6px 8px; }
+  .fc-datos { gap: 4px; margin-bottom: 4px; }
+  .fila-compacta > input { margin-bottom: 4px; }
+  .fila-compacta input[type="text"], .fila-compacta select { padding: 5px 7px; }
+  .fc-clasificar { gap: 4px; }
+  .fc-clasificar .selector-tipo button { padding: 5px 8px; }
+  .fila-compacta .acciones { margin-top: 4px; gap: 4px; }
+  .fila-compacta .acciones button { padding: 6px 8px; }
 }
 
 /* Tablas de gastos y resumen */
@@ -333,15 +360,24 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 .fila-pendiente { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
 .fila-pendiente .acciones { margin: 0; }
 
+/* Una sola línea fija: archivo · avance · cerrar */
 .cabecera-importacion {
   position: sticky;
   top: 52px;
   z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   background: var(--fondo);
-  padding: 8px 0;
+  padding: 6px 0;
   margin-bottom: 8px;
   border-bottom: 1px solid var(--borde);
 }
+.nombre-importacion { flex: 1; min-width: 0; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cabecera-importacion .contador { margin: 0; white-space: nowrap; font-size: .9rem; }
+.cerrar-importacion { flex: none; padding: 4px 10px; }
+.intro-importacion { margin-bottom: 8px; }
+.intro-importacion .nota { margin: 4px 0; }
 .contador { font-weight: 700; margin: 4px 0; }
 .tarjeta-importacion { margin-bottom: 16px; }
 .numero-importacion { font-size: .8rem; font-weight: 600; color: var(--texto-suave); margin-bottom: 4px; }
@@ -371,3 +407,9 @@ button.enlace { border: 0; background: none; color: var(--acento); padding: 4px;
 
 /* Botón Personal desactivado (gasto a nombre de otra persona). */
 .selector-tipo button:disabled { cursor: not-allowed; }
+
+/* Celular: reglas que deben ir después de las generales de la importación. */
+@media (max-width: 560px) {
+  .cabecera-importacion { top: 0; }
+  .numero-importacion { margin-bottom: 2px; }
+}

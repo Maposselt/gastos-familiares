@@ -1229,6 +1229,101 @@ function detectarColumnas(filas) {
   return null;
 }
 
+const MAXIMO_FOTOS_CARTOLA = 5;
+const MAXIMO_PIEZAS_CARTOLA = 10;
+
+/**
+ * Prepara una captura para la IA: ancho máximo 1000 px, en JPEG. Si es una
+ * captura muy larga (de las que bajan por toda la pantalla), se corta en
+ * trozos del alto de una pantalla, con un poco de solape, para que se lea bien.
+ */
+async function piezasDeCaptura(archivo) {
+  let imagen;
+  try {
+    imagen = await createImageBitmap(archivo);
+  } catch (error) {
+    throw new Error('No pude abrir ' + archivo.name + '. Prueba con una imagen JPG o PNG.');
+  }
+  const escala = Math.min(1, 1000 / imagen.width);
+  const ancho = Math.round(imagen.width * escala);
+  const alto = Math.round(imagen.height * escala);
+  const altoPieza = Math.round(ancho * 2.4);
+  const solape = 150;
+  const piezas = [];
+  for (let y = 0; ; y += altoPieza - solape) {
+    const h = Math.min(altoPieza, alto - y);
+    const lienzo = document.createElement('canvas');
+    lienzo.width = ancho;
+    lienzo.height = h;
+    lienzo.getContext('2d').drawImage(imagen, 0, y / escala, imagen.width, h / escala, 0, 0, ancho, h);
+    piezas.push(lienzo.toDataURL('image/jpeg', 0.85).split(',')[1]);
+    if (y + h >= alto) {
+      break;
+    }
+  }
+  return piezas;
+}
+
+/** Capturas de la app del banco: la IA lee los cargos y pasan a la revisión de siempre. */
+async function importarFotos(archivos) {
+  const contenedor = $('contenedor-importacion');
+  if (archivos.length > MAXIMO_FOTOS_CARTOLA) {
+    avisar('Elige como máximo ' + MAXIMO_FOTOS_CARTOLA + ' capturas a la vez.', true);
+    return;
+  }
+  if (archivos.some((a) => a.size > 20 * 1024 * 1024)) {
+    avisar('Alguna imagen es muy grande.', true);
+    return;
+  }
+  const nombre = archivos.length === 1 ? archivos[0].name : archivos.length + ' capturas';
+  vaciar(contenedor, el('p', { class: 'cargando', text: '📷 Leyendo ' + nombre + ' con IA… puede tardar hasta un minuto.' }));
+  contenedor.hidden = false;
+  $('contenedor-nuevo').hidden = true;
+  try {
+    const piezas = [];
+    for (const archivo of archivos) {
+      piezas.push(...await piezasDeCaptura(archivo));
+    }
+    if (piezas.length > MAXIMO_PIEZAS_CARTOLA) {
+      throw new Error('Las capturas son demasiado largas. Envíalas en grupos más chicos.');
+    }
+    const bytes = piezas.reduce((s, p) => s + p.length * 3 / 4, 0);
+    if (bytes > 5 * 1024 * 1024) {
+      throw new Error('Las capturas pesan demasiado juntas. Envíalas en grupos más chicos.');
+    }
+    const r = await llamar('leerCartolaImagen', { imagenes: piezas.map((p) => ({ tipo: 'image/jpeg', base64: p })) });
+    if (!r.items.length) {
+      throw new Error('No encontré cargos en las capturas.');
+    }
+    avisar(r.items.length + ' cargos encontrados. Revisa fechas y montos. ' + textoUsoIA(r.uso));
+    await prepararRevision({ items: r.items, omitidas: r.omitidas }, nombre);
+  } catch (error) {
+    avisar('No pude leer las capturas: ' + error.message, true);
+    cerrarImportacion();
+  }
+}
+
+/** Uno o varios archivos elegidos en "Importar cartola". */
+function importarArchivos(lista) {
+  const archivos = Array.from(lista);
+  const imagenes = archivos.filter((a) => /^image\//.test(a.type));
+  if (imagenes.length) {
+    if (imagenes.length !== archivos.length) {
+      avisar('Elige solo imágenes, o un solo archivo Excel, CSV o PDF.', true);
+      $('archivo-cartola').value = '';
+      return;
+    }
+    importarFotos(imagenes);
+    return;
+  }
+  if (archivos.length > 1) {
+    avisar('Elige un solo archivo Excel, CSV o PDF (varias a la vez solo con fotos).', true);
+    $('archivo-cartola').value = '';
+    return;
+  }
+  importarArchivo(archivos[0]);
+}
+
 async function importarArchivo(archivo) {
   const contenedor = $('contenedor-importacion');
   if (archivo.size > 5 * 1024 * 1024) {
@@ -1531,7 +1626,7 @@ function pintarRevision(items, duplicados, sugerencias, info) {
     const pendientes = filas.filter((f) => !f.terminada);
     pendientes.forEach((f) => { conteo[f.formulario.obtenerDecision().decision]++; });
     const listos = items.length - pendientes.length;
-    contador.textContent = 'Listos ' + listos + ' de ' + items.length + (pendientes.length ? '' : ' ✅ ¡Terminado!');
+    contador.textContent = 'Listos ' + listos + ' de ' + items.length + (pendientes.length ? '' : ' ✅');
     resumenDecisiones.textContent = conteo.ok + ' OK · ' + conteo.porRevisar + ' por revisar · ' +
       conteo.descartar + ' descartar · ' + conteo[''] + ' sin decidir';
     botonGuardar.disabled = !(conteo.ok + conteo.porRevisar + conteo.descartar);
@@ -1594,24 +1689,32 @@ function pintarRevision(items, duplicados, sugerencias, info) {
   }
   actualizarCopias();
   actualizarBarra();
+  // Arriba queda fija solo una línea (archivo, avance y cerrar); lo demás se va al bajar.
+  const botonCerrar = el('button', {
+    type: 'button', class: 'cerrar-importacion', text: '✕', title: 'Cerrar importación', 'aria-label': 'Cerrar importación',
+    onclick: () => {
+      if (filas.every((f) => f.terminada) || confirm('Quedan gastos sin guardar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
+        cerrarImportacion();
+      }
+    }
+  });
+  document.body.classList.add('importando');
   vaciar($('contenedor-importacion'),
     el('div', { class: 'cabecera-importacion' },
-      el('h3', { text: '📄 ' + info.nombreArchivo }),
+      el('span', { class: 'nombre-importacion', text: '📄 ' + info.nombreArchivo }),
       contador,
+      botonCerrar),
+    el('div', { class: 'intro-importacion' },
       selectorCartola ? el('label', {}, '¿De quién es esta cartola? ', selectorCartola) : null,
       notaCartola,
       el('p', { class: 'nota', text: 'En cada gasto elige Familiar o Personal, revisa la categoría y marca OK, Por revisar o Descartar. Al final toca "Guardar decisiones".' }),
-      avisos.map((a) => el('p', { class: 'nota', text: a })),
-      el('button', { type: 'button', text: 'Cerrar importación', onclick: () => {
-        if (filas.every((f) => f.terminada) || confirm('Quedan gastos sin guardar. ¿Cerrar igual? Podrás importar el archivo de nuevo: lo ya guardado aparecerá como duplicado.')) {
-          cerrarImportacion();
-        }
-      } })),
+      avisos.map((a) => el('p', { class: 'nota', text: a }))),
     el('ul', { class: 'lista lista-importacion' }, tarjetas),
     el('div', { class: 'barra-decisiones' }, resumenDecisiones, botonGuardar));
 }
 
 function cerrarImportacion() {
+  document.body.classList.remove('importando');
   vaciar($('contenedor-importacion'));
   $('contenedor-importacion').hidden = true;
   $('contenedor-nuevo').hidden = false;
@@ -2267,8 +2370,8 @@ function iniciar() {
   $('boton-nueva-categoria').addEventListener('click', () => abrirCategoria(null));
   $('boton-importar').addEventListener('click', () => $('archivo-cartola').click());
   $('archivo-cartola').addEventListener('change', (e) => {
-    if (e.target.files[0]) {
-      importarArchivo(e.target.files[0]);
+    if (e.target.files.length) {
+      importarArchivos(e.target.files);
     }
   });
   $('filtro-desactivadas').addEventListener('change', pintarConfig);

@@ -9,8 +9,8 @@
   <meta name="color-scheme" content="light dark">
   <title>Gastos Familiares</title>
   <!-- Al cambiar app.js o estilos.css, subir el número de versión para que los navegadores los descarguen de nuevo. -->
-  <link rel="stylesheet" href="estilos.css?v=13">
-  <script src="app.js?v=15" defer></script>
+  <link rel="stylesheet" href="estilos.css?v=14">
+  <script src="app.js?v=16" defer></script>
 </head>
 <body>
   <header class="barra">
@@ -37,8 +37,8 @@
     <section id="pantalla-nuevo" class="pantalla" hidden>
       <h2>Nuevo gasto</h2>
       <div class="filtros">
-        <button type="button" id="boton-importar">📄 Importar cartola (Excel, CSV o PDF)</button>
-        <input type="file" id="archivo-cartola" accept=".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+        <button type="button" id="boton-importar">📄 Importar cartola (Excel, CSV, PDF o fotos)</button>
+        <input type="file" id="archivo-cartola" accept=".xlsx,.csv,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/*" multiple hidden>
         <button type="button" id="boton-boleta">📷 Foto de boleta</button>
         <input type="file" id="archivo-boleta" accept="image/*" hidden>
       </div>
